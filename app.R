@@ -136,6 +136,14 @@ ui <- page_sidebar(
                   )
                 )
         ),
+        tags$li("GOVTRACK.us",
+                tags$ul(
+                  tags$li(
+                    tags$a(href = "https://www.govtrack.us/congress/members/current", "Congressional members list", target = "_blank")
+                    tags$a(href = "https://www.govtrack.us/accounts/lists", "Create trackers", target = "_blank")
+                  )
+                )
+        ),
       )
     )
   )
