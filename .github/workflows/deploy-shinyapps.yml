@@ -1,0 +1,68 @@
+name: Deploy to shinyapps.io
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    env:
+      # If your app is in a subfolder, change "." to that path
+      APP_DIR: "."
+      # Optional: force a specific app URL suffix
+      SHINYAPPS_APPNAME: "SumSearch"
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+
+      - name: Set up Pandoc
+        uses: r-lib/actions/setup-pandoc@v2
+
+      - name: Restore renv (if present)
+        run: |
+          Rscript -e 'if (file.exists("renv.lock")) { install.packages("renv"); renv::restore() }'
+
+      - name: Install rsconnect (if needed)
+        run: |
+          Rscript -e 'if (!"rsconnect" %in% rownames(installed.packages())) install.packages("rsconnect")'
+
+      - name: Show config
+        run: |
+          echo "Account: ${{ secrets.SHINYAPPS_ACCOUNT }}"
+          echo "App dir: $APP_DIR"
+          echo "App name: ${SHINYAPPS_APPNAME:-<default-to-folder>}"
+          ls -la "$APP_DIR"
+
+      - name: Deploy to shinyapps.io
+        env:
+          SHINYAPPS_ACCOUNT: ${{ secrets.SHINYAPPS_ACCOUNT }}
+          SHINYAPPS_TOKEN:   ${{ secrets.SHINYAPPS_TOKEN }}
+          SHINYAPPS_SECRET:  ${{ secrets.SHINYAPPS_SECRET }}
+        run: |
+          Rscript - <<'RSCRIPT'
+          if (!"rsconnect" %in% rownames(installed.packages())) install.packages("rsconnect")
+          rsconnect::setAccountInfo(
+            name   = Sys.getenv("SHINYAPPS_ACCOUNT"),
+            token  = Sys.getenv("SHINYAPPS_TOKEN"),
+            secret = Sys.getenv("SHINYAPPS_SECRET")
+          )
+          app_dir  <- Sys.getenv("APP_DIR", unset = ".")
+          app_name <- Sys.getenv("SHINYAPPS_APPNAME", unset = basename(normalizePath(app_dir)))
+          cat("Deploying", app_dir, "as app", app_name, "to account", Sys.getenv("SHINYAPPS_ACCOUNT"), "\n")
+          rsconnect::deployApp(
+            appDir     = app_dir,
+            appName    = app_name,
+            forceUpdate= TRUE,
+            logLevel   = "verbose"
+          )
+          message("Deployment completed: https://", Sys.getenv("SHINYAPPS_ACCOUNT"), ".shinyapps.io/", app_name, "/")
+          RSCRIPT
