@@ -111,13 +111,18 @@ ui <- page_sidebar(
                   tags$li(
                     tags$a(href = "https://api.open.fec.gov/developers/", "open.FEC developers", target = "_blank")
                   ),
+                  tags$li(
+                    tags$a(href = "https://fecnotify.fec.gov/fecnotify/", "Create alerts", target = "_blank")
+                    )
+                  ),
                     tags$li(
                       tags$a(href = "https://voteview.com/data", "VoteView.com/data", target = "_blank")
                     ),
                   tags$ul(
                     tags$li(
                       tags$a(href = "https://www.fec.gov/data/receipts/", "Receipts", target = "_blank")
-                  )),
+                    )
+                  ),
                   tags$li(
                     tags$a(href = "https://www.fec.gov/files/bulk-downloads/2026/ccl26.zip", "Crosswalk: candidate-committee", target = "_blank")
                 )
@@ -140,7 +145,7 @@ ui <- page_sidebar(
                 tags$ul(
                   tags$li(
                     tags$a(href = "https://www.govtrack.us/congress/members/current", "Congressional members list", target = "_blank"),
-                    tags$a(href = "https://www.govtrack.us/accounts/lists", "Create trackers", target = "_blank")
+                    tags$a(href = "https://www.govtrack.us/accounts/lists", "Create alerts", target = "_blank")
                   )
                 )
         ),
