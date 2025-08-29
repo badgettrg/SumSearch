@@ -113,18 +113,27 @@ ui <- page_sidebar(
           tags$a(href = "https://api.open.fec.gov/developers/", "open.FEC developers", target = "_blank")
         ),
         tags$li(
-            tags$a(href = "https://www.fec.gov/data/", "Data", target = "_blank")
-          ),
-          tags$ul(tags$li(
-          tags$a(href = "https://www.fec.gov/data/receipts/", "Receipts", target = "_blank")
-        )
+          tags$a(href = "https://www.fec.gov/data/", "Data", target = "_blank")
         ),
-      tags$li(
-        tags$a(href = "https://www.fec.gov/files/bulk-downloads/2026/ccl26.zip", "Crosswalk: candidate-committee", target = "_blank")
+        tags$ul(tags$li(
+          tags$a(href = "https://www.fec.gov/data/", "Candidates", target = "_blank"), "(used for the candidate's 'fec_candidate_id')",
+        ),
+        tags$ul(tags$li(
+          tags$a(href = "https://www.fec.gov/data/browse-data/?tab=bulk-data", "Candidate-committee linkages", target = "_blank"), " (used for current current year's linkages of fec_candidate_id to the  political action committee(s) (PACs) that the candidate uses to receive campaing contributions.",
+        ),
+          tags$ul(tags$li(
+            tags$a(href = "https://www.fec.gov/data/receipts/", "Receipts", target = "_blank"), " (search using the campaign committees aboves)",
+          )
+          ),
+          tags$li(
+            tags$a(href = "https://www.fec.gov/files/bulk-downloads/2026/ccl26.zip", "Crosswalk: candidate-committee", target = "_blank")
+          )
+          ),
+          ),
+        tags$li(
+          tags$a(href = "https://fecnotify.fec.gov/fecnotify/register/", "Create tracker", target = "_blank")
+        )
       ),
-      tags$li(
-        tags$a(href = "https://fecnotify.fec.gov/fecnotify/register/", "Create tracker", target = "_blank")
-      )),
       tags$div("VoteView.gov"),
       tags$ul(
         tags$li(
@@ -148,7 +157,8 @@ ui <- page_sidebar(
         tags$li(
           tags$a(href = "https://www.opensecrets.org/bulk-data", "Data", target = "_blank")
         )
-      ),              ###* Finance sources *not* used ----
+      ),
+      ###* Finance sources *not* used ----
               h4("Data sources not used:"),
               tags$div("These entities cannot earmark/designate money from companies to candidates."),
               tags$ul(
