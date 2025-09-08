@@ -67,7 +67,7 @@ ui <- page_sidebar(
   titlePanel("SumSearch: searching for money influences on national politics"),
  ## sidebar -----
   sidebar = sidebar(
-    open  = "open",   # "open" (user can close it) | "closed" (starts closed)
+    open  = "closed",   # "open" (user can close it) | "closed" (starts closed)
     width = 320,      # adjust to taste
     
     helpText("..."),
