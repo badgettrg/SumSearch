@@ -18,6 +18,8 @@ library(crayon)
 
 options(shiny.launch.browser = TRUE)
 
+attach(htmltools::tags)
+
 # Functions and Helpers: app directory + null-coalescing operator --------
 `%||%` <- function(x, y) if (is.null(x)) y else x
 APP_DIR <- shiny::getShinyOption("appdir") %||% normalizePath(getwd(), winslash = "/")
@@ -75,25 +77,32 @@ ui <- page_sidebar(
   ),
   
   ## Main content ------
-  ##* Tab 1: DW-NOMINATE scatterplot -----
+  ##* Tab 1: Menu  -----
   tabsetPanel(
     id = "main_tabs",
     type = "tabs",
-    selected = "DW-NOMINATE scatterplot",
+    selected = "Welcome",
     tabPanel(
-      title = "DW-NOMINATE scatterplot",
-      h3("DW-NOMINATE scatterplot"),
+      title = "Welcome",
+      h3("Choose a scenario to investigate"),
+      ul(
+        li("A political issue has surfaced and you want to know which congressional members are receiving donations from key political action committees (PAC). Enter the key text that is included in one of more PAC names, such as \"National Rifle Association\" or \"Planned Parenthood\" or \"Lockheed Martin\" (without quotes).", 
+           textInput(inputId = "scenario1_search_string", value = "Lockheed Martin", label= NULL)),
+        li("(Not implemented) You encountered a new political action committee (PAC) with a vague name. What is the weighted political leaning of recipients of donations from this PAC?"),
+        li("(Not implemented) A member of congress makes new statements that do not align with prior stated views. What PAC money has this member received and have any of PACs increased their donations to this member?")
+      )
       # plotOutput("dwplot", height = 600)
     ),
-    ##* Tab 2: Receipts by DW-NOMINATE plot -----
+    ##* Tab 2: Results -----
     tabPanel(
-      title = "Receipts by DW-NOMINATE plot",
+      title = "Results",
+      h3("Receipts by DW-NOMINATE scatterplot"),
       # plotOutput("table2_preview", height = 600)
     ),
-    ##* Tab 3: Recipients, sorted table -----
+    ##* Tab 3: Results - details -----
     tabPanel(
-      title = "Recipients, sorted",
-      h3("Recipients, sorted by the product of DW-NOMINATE1*receipts"),
+      title = "Results - details",
+      h3("Recipients, sorted by the total values of receipts"),
       # DTOutput("recipients_table"),
       tags$br(),
       div(style="color:#666;",
