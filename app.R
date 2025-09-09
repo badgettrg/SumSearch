@@ -83,7 +83,17 @@ function_load_csv <- function(
 # UI **********************-----------------------------------------------------------
 ui <- page_sidebar(
   titlePanel("SumSearch: searching for money influences on national politics"),
- ## sidebar -----
+  
+  # --- Insert global CSS here ---
+  tags$head(
+    tags$style(HTML("
+      .li-flex { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .li-flex .shiny-input-container { margin-bottom: 0; }
+      .li-flex .input-wrap { flex: 0 0 320px; }  /* fixed width, keeps button close */
+      "))
+  ),
+  
+  ## sidebar -----
   sidebar = sidebar(
     open  = "closed",   # "open" (user can close it) | "closed" (starts closed)
     width = 320,      # adjust to taste
@@ -104,15 +114,24 @@ ui <- page_sidebar(
       title = "Welcome",
       h3("Choose a scenario to investigate"),
       ul(
-        li("A political issue has surfaced and you want to know which congressional members are receiving donations from key political action committees (PAC). Enter the key text that is included in one of more PAC names, such as \"National Rifle Association\" or \"Planned Parenthood\" or \"Lockheed Martin\" (without quotes).", 
-           textInput(inputId = "scenario1_search_string", value = "Lockheed Martin", label= NULL),
-           actionButton("scenario1_go", "Fetch FEC Receipts")
-           ),
-        li("(Not implemented) You encountered a new political action committee (PAC) with a vague name. What is the weighted political leaning of recipients of donations from this PAC?"),
-        li("(Not implemented) A member of congress makes new statements that do not align with prior stated views. What PAC money has this member received and have any of PACs increased their donations to this member?")
-      )
+        tags$li(
+        div(
+          # Description sits on its own line
+          span("A political issue has surfaced and you want to know which congressional members are receiving donations from key political action committees (PAC). Enter the key text that is included in one of more PAC names, such as \"National Rifle Association\" or \"Planned Parenthood\" or \"Lockheed Martin\" (without quotes).")
+        ),
+        div(class = "li-flex",
+            div(class = "input-wrap",
+                textInput("scenario1_search_string", label = NULL, value = "Lockheed Martin")
+            ),
+            actionButton("scenario1_go", "Fetch FEC Receipts")
+        )
+      ),
+      li("(Not implemented) You encountered a new political action committee (PAC) with a vague name. What is the weighted political leaning of recipients of donations from this PAC?"),
+      li("(Not implemented) A member of congress makes new statements that do not align with prior stated views. What PAC money has this member received and have any of PACs increased their donations to this member?")
+    )
       # plotOutput("dwplot", height = 600)
     ),
+
     ##* Tab 2: Results -----
     tabPanel(
       title = "Results",
