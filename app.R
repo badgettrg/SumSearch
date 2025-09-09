@@ -35,9 +35,6 @@ library(htmltools)
 library(bslib)
 library(crayon)
 
-
-attach(htmltools::tags)
-
 # Functions and Helpers: app directory + null-coalescing operator --------
 `%||%` <- function(x, y) if (is.null(x)) y else x
 APP_DIR <- shiny::getShinyOption("appdir") %||% normalizePath(getwd(), winslash = "/")
@@ -113,7 +110,7 @@ ui <- page_sidebar(
     tabPanel(
       title = "Welcome",
       h3("Choose a scenario to investigate"),
-      ul(
+      tags$ul(
         tags$li(
         div(
           # Description sits on its own line
@@ -126,8 +123,8 @@ ui <- page_sidebar(
             actionButton("scenario1_go", "Fetch FEC Receipts")
         )
       ),
-      li("(Not implemented) You encountered a new political action committee (PAC) with a vague name. What is the weighted political leaning of recipients of donations from this PAC?"),
-      li("(Not implemented) A member of congress makes new statements that do not align with prior stated views. What PAC money has this member received and have any of PACs increased their donations to this member?")
+      tags$li("(Not implemented) You encountered a new political action committee (PAC) with a vague name. What is the weighted political leaning of recipients of donations from this PAC?"),
+      tags$li("(Not implemented) A member of congress makes new statements that do not align with prior stated views. What PAC money has this member received and have any of PACs increased their donations to this member?")
     )
       # plotOutput("dwplot", height = 600)
     ),
