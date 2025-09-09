@@ -3,6 +3,25 @@
 # License: Code GPL-3.0; Images CC BY-NC-SA 4.0
 # Last edited: 2025-08-23
 
+# setwd ----
+if (Sys.getenv("RSTUDIO") == "1") {
+  # Running inside RStudio IDE
+  if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
+    setwd(dirname(rstudioapi::getSourceEditorContext()$path))
+  }
+} else {
+  # Running from R console or command line (e.g., Rscript, shiny::runApp)
+  args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", args, value = TRUE)
+  if (length(file_arg) > 0) {
+    script_path <- dirname(sub("^--file=", "", file_arg))
+    setwd(script_path)
+  }
+}
+
+readRenviron(".Renviron")
+Sys.getenv("FEC_API_KEY")
+
 # ---- Libraries/packages (comment out for locked environments) ----
 need <- c("shiny","data.table","DT","htmltools","bslib","crayon")
 for (p in need) if (!requireNamespace(p, quietly = TRUE)) {
@@ -16,7 +35,6 @@ library(htmltools)
 library(bslib)
 library(crayon)
 
-options(shiny.launch.browser = TRUE)
 
 attach(htmltools::tags)
 
@@ -87,7 +105,9 @@ ui <- page_sidebar(
       h3("Choose a scenario to investigate"),
       ul(
         li("A political issue has surfaced and you want to know which congressional members are receiving donations from key political action committees (PAC). Enter the key text that is included in one of more PAC names, such as \"National Rifle Association\" or \"Planned Parenthood\" or \"Lockheed Martin\" (without quotes).", 
-           textInput(inputId = "scenario1_search_string", value = "Lockheed Martin", label= NULL)),
+           textInput(inputId = "scenario1_search_string", value = "Lockheed Martin", label= NULL),
+           actionButton("scenario1_go", "Fetch FEC Receipts")
+           ),
         li("(Not implemented) You encountered a new political action committee (PAC) with a vague name. What is the weighted political leaning of recipients of donations from this PAC?"),
         li("(Not implemented) A member of congress makes new statements that do not align with prior stated views. What PAC money has this member received and have any of PACs increased their donations to this member?")
       )
@@ -97,6 +117,7 @@ ui <- page_sidebar(
     tabPanel(
       title = "Results",
       h3("Receipts by DW-NOMINATE scatterplot"),
+      h4(textOutput("results_nrows"))
       # plotOutput("table2_preview", height = 600)
     ),
     ##* Tab 3: Results - details -----
@@ -201,7 +222,47 @@ ui <- page_sidebar(
     )
 )
 
-server <- function(input, output) {}
+# SERVER ****************************------
+server <- function(input, output, session) {
+  
+  # hold results
+  dt_fec <- reactiveVal(data.table::data.table())
+  
+  observeEvent(input$scenario1_go, {
+    # safely pull the UI value inside server
+    nm <- input$scenario1_search_string
+    nm <- if (is.null(nm)) "" else trimws(nm)
+    if (nm == "") {
+      showNotification("Please enter a PAC or organization name.", type = "warning")
+      return(invisible(NULL))
+    }
+    
+    # TODO: call your FEC fetch function here when you wire it in.
+    # For now, just store a dummy table so the Results tab updates.
+    # Replace the next line with your real fetch, e.g.:
+    # dt <- function_fetch_fec_schedule_a(contributor_name = nm, ...)
+    dt <- data.table::data.table(dummy = nm)
+    dt_fec(dt)
+    
+    # Switch to the Results tab
+    updateTabsetPanel(session, inputId = "main_tabs", selected = "Results")
+  })
+  
+  output$results_nrows <- renderText({
+    paste0("Rows received from FEC: ", nrow(dt_fec()))
+  })
+}
 
-# On shinyapps.io, just call shinyApp — no install.packages(), no runApp(), no browser options
+# Launch shinyApp -----
+if (Sys.getenv("RSTUDIO") == "1") {
+  cat("~ expands to: ", path.expand("~"), "\n", sep = "")
+  cat("R_ENVIRON_USER: ", Sys.getenv("R_ENVIRON_USER"), "\n", sep = "")
+  cat("Renviron-like files in ~:\n")
+  print(list.files(path.expand("~"), all.files = TRUE, pattern = "Renviron"))
+  
+  options(shiny.fullstacktrace = TRUE)
+  options(shiny.launch.browser = TRUE)
+  cat("Options set: shiny.fullstacktrace, shiny.launch.browser\n")
+}
+
 shinyApp(ui = ui, server = server)

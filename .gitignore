@@ -1,0 +1,27 @@
+# --- R session files ---
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+
+# --- Environment / secrets ---
+.Renviron
+.Rprofile
+
+# --- Shiny logs / cache ---
+rsconnect/
+shinyapps/
+.Rs.*
+*.Rout
+*.Rout.save
+
+# --- Operating system cruft ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Project-specific ---
+# Ignore any keys or config files you might create locally
+*.key
+*.secret
+*.env
