@@ -47,17 +47,20 @@ jobs:
           Rscript -e 'options(repos=c(CRAN="https://cloud.r-project.org")); rsconnect::setAccountInfo(name=Sys.getenv("SHINYAPPS_ACCOUNT"), token=Sys.getenv("SHINYAPPS_TOKEN"), secret=Sys.getenv("SHINYAPPS_SECRET")); print(rsconnect::accountInfo())'
 
       # --- Minimal insertion begins ---
-      - name: Create .Renviron from GitHub Secrets (and exclude from bundle)
+      - name: secrets.FEC_API_KEY
         working-directory: ${{ env.APP_DIR }}
         shell: bash
         env:
-          FEC_API_KEY: ${{ secrets.FEC_API_KEY }}
+          FEC_API_KEY: ${{ secrets.FEC_API_KEY }} # Set the secret as an environment variable for the deploy step
         run: |
-          set -euo pipefail
-          echo "FEC_API_KEY=${FEC_API_KEY}" > .Renviron
-          # Ensure rsconnect does NOT upload .Renviron
-          { test -f .rscignore && cat .rscignore || true; echo ".Renviron"; } | awk ' !x[$0]++ ' > .rscignore
-          echo ".Renviron written and excluded via .rscignore"
+          Rscript -e '
+            rsconnect::deployApp(
+              appDir = ".",
+              forceUpdate = TRUE,
+              appName = Sys.getenv("SHINY_APP_NAME"),
+              account = Sys.getenv("SHINY_ACCOUNT"),
+              env.vars = c(FEC_API_KEY = Sys.getenv("FEC_API_KEY"))
+            )
       # --- Minimal insertion ends ---
 
       - name: Deploy to shinyapps.io
