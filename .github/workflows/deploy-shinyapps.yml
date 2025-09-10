@@ -49,18 +49,27 @@ jobs:
           );
           print(rsconnect::accountInfo())'
 
-      # ---- The single deploy step (properly indented under steps) ----
-      - name: Deploy to shinyapps.io (persist FEC_API_KEY)
+      # --- write FEC_API_KEY into .Renviron and ensure it's included in the bundle ---
+      - name: Write .Renviron for deploy
         env:
-          SHINY_APP_NAME: ${{ env.SHINYAPPS_APPNAME }}
-          SHINY_ACCOUNT:  ${{ secrets.SHINYAPPS_ACCOUNT }}
-          FEC_API_KEY:    ${{ secrets.FEC_API_KEY }}   # from GitHub repo secrets
+          FEC_API_KEY: ${{ secrets.FEC_API_KEY }}
         run: |
           set -euo pipefail
-          Rscript -e 'rsconnect::deployApp(
-            appDir     = Sys.getenv("APP_DIR", "."),
-            appName    = Sys.getenv("SHINY_APP_NAME"),
-            account    = Sys.getenv("SHINY_ACCOUNT"),
-            forceUpdate= TRUE,
-            envVars    = c(FEC_API_KEY = Sys.getenv("FEC_API_KEY"))  # persists on shinyapps.io
-          )'
+          printf 'FEC_API_KEY=%s\n' "$FEC_API_KEY" > .Renviron
+          echo "Wrote .Renviron (1 line)"
+          # Make sure .Renviron is NOT excluded by .rscignore
+          if [ -f .rscignore ]; then
+            sed -i '/^\.Renviron$/d' .rscignore
+          fi
+
+      - name: Deploy to shinyapps.io
+        env:
+          SHINYAPPS_ACCOUNT: ${{ secrets.SHINYAPPS_ACCOUNT }}
+        run: |
+          Rscript -e 'options(repos=c(CRAN="https://cloud.r-project.org"));
+          app_dir  <- Sys.getenv("APP_DIR", unset=".")
+          app_name <- Sys.getenv("SHINYAPPS_APPNAME", unset=basename(normalizePath(app_dir)))
+          rsconnect::deployApp(appDir = app_dir,
+                               appName = app_name,
+                               forceUpdate = TRUE,
+                               logLevel = "verbose")'
