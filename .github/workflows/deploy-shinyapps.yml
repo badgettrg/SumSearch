@@ -61,4 +61,6 @@ jobs:
             appDir     = Sys.getenv("APP_DIR", "."),
             appName    = Sys.getenv("SHINY_APP_NAME"),
             account    = Sys.getenv("SHINY_ACCOUNT"),
-            forc
+            forceUpdate= TRUE,
+            envVars    = c(FEC_API_KEY = Sys.getenv("FEC_API_KEY"))  # persists on shinyapps.io
+          )'
