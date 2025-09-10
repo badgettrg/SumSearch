@@ -47,21 +47,22 @@ jobs:
           Rscript -e 'options(repos=c(CRAN="https://cloud.r-project.org")); rsconnect::setAccountInfo(name=Sys.getenv("SHINYAPPS_ACCOUNT"), token=Sys.getenv("SHINYAPPS_TOKEN"), secret=Sys.getenv("SHINYAPPS_SECRET")); print(rsconnect::accountInfo())'
 
       # --- Minimal insertion begins ---
-      - name: secrets.FEC_API_KEY
-        working-directory: ${{ env.APP_DIR }}
-        shell: bash
-        env:
-          FEC_API_KEY: ${{ secrets.FEC_API_KEY }} # Set the secret as an environment variable for the deploy step
-        run: |
-          Rscript -e '
-            rsconnect::deployApp(
-              appDir = ".",
-              forceUpdate = TRUE,
-              appName = Sys.getenv("SHINY_APP_NAME"),
-              account = Sys.getenv("SHINY_ACCOUNT"),
-              env.vars = c(FEC_API_KEY = Sys.getenv("FEC_API_KEY"))
-            )
-      # --- Minimal insertion ends ---
+- name: Deploy to shinyapps.io
+  shell: bash
+  env:
+    SHINY_APP_NAME: ${{ env.SHINYAPPS_APPNAME }}
+    SHINY_ACCOUNT:  ${{ secrets.SHINYAPPS_ACCOUNT }}
+    FEC_API_KEY:    ${{ secrets.FEC_API_KEY }}   # from GitHub repo secrets
+  run: |
+    set -euo pipefail
+    Rscript -e 'rsconnect::deployApp(
+      appDir = ".",
+      appName = Sys.getenv("SHINY_APP_NAME"),
+      account = Sys.getenv("SHINY_ACCOUNT"),
+      forceUpdate = TRUE,
+      envVars = c(FEC_API_KEY = Sys.getenv("FEC_API_KEY"))  # <-- correct arg name
+    )'
+    # --- Minimal insertion ends ---
 
       - name: Deploy to shinyapps.io
         env:
