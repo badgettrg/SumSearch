@@ -1,7 +1,7 @@
 name: Deploy to shinyapps.io
 
 on:
-  workflow_dispatch:   # manual trigger while we debug
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -12,7 +12,6 @@ jobs:
     env:
       APP_DIR: "."
       SHINYAPPS_APPNAME: "SumSearch"
-      # ⚠️ You don’t commit .Renviron to Git (keep .Renviron in .gitignore). The Action creates it on-the-fly each deploy.
 
     steps:
       - name: Check out repo
@@ -24,12 +23,10 @@ jobs:
       - name: Set up Pandoc
         uses: r-lib/actions/setup-pandoc@v2
 
-      # Install deps via r-lib action (this is the reliable way)
       - name: Install dependencies (incl. rsconnect)
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: rsconnect
-          needs: rsconnect
+          extra-packages: any::rsconnect
 
       - name: Show config
         run: |
@@ -44,34 +41,24 @@ jobs:
           SHINYAPPS_TOKEN:   ${{ secrets.SHINYAPPS_TOKEN }}
           SHINYAPPS_SECRET:  ${{ secrets.SHINYAPPS_SECRET }}
         run: |
-          Rscript -e 'options(repos=c(CRAN="https://cloud.r-project.org")); rsconnect::setAccountInfo(name=Sys.getenv("SHINYAPPS_ACCOUNT"), token=Sys.getenv("SHINYAPPS_TOKEN"), secret=Sys.getenv("SHINYAPPS_SECRET")); print(rsconnect::accountInfo())'
+          Rscript -e 'options(repos=c(CRAN="https://cloud.r-project.org"));
+          rsconnect::setAccountInfo(
+            name   = Sys.getenv("SHINYAPPS_ACCOUNT"),
+            token  = Sys.getenv("SHINYAPPS_TOKEN"),
+            secret = Sys.getenv("SHINYAPPS_SECRET")
+          );
+          print(rsconnect::accountInfo())'
 
-      # --- Minimal insertion begins ---
-- name: Deploy to shinyapps.io
-  shell: bash
-  env:
-    SHINY_APP_NAME: ${{ env.SHINYAPPS_APPNAME }}
-    SHINY_ACCOUNT:  ${{ secrets.SHINYAPPS_ACCOUNT }}
-    FEC_API_KEY:    ${{ secrets.FEC_API_KEY }}   # from GitHub repo secrets
-  run: |
-    set -euo pipefail
-    Rscript -e 'rsconnect::deployApp(
-      appDir = ".",
-      appName = Sys.getenv("SHINY_APP_NAME"),
-      account = Sys.getenv("SHINY_ACCOUNT"),
-      forceUpdate = TRUE,
-      envVars = c(FEC_API_KEY = Sys.getenv("FEC_API_KEY"))  # <-- correct arg name
-    )'
-    # --- Minimal insertion ends ---
-
-      - name: Deploy to shinyapps.io
+      # ---- The single deploy step (properly indented under steps) ----
+      - name: Deploy to shinyapps.io (persist FEC_API_KEY)
         env:
-          SHINYAPPS_ACCOUNT: ${{ secrets.SHINYAPPS_ACCOUNT }}
+          SHINY_APP_NAME: ${{ env.SHINYAPPS_APPNAME }}
+          SHINY_ACCOUNT:  ${{ secrets.SHINYAPPS_ACCOUNT }}
+          FEC_API_KEY:    ${{ secrets.FEC_API_KEY }}   # from GitHub repo secrets
         run: |
-          Rscript - <<'RSCRIPT'
-          options(repos=c(CRAN="https://cloud.r-project.org"))
-          app_dir  <- Sys.getenv("APP_DIR", unset=".")
-          app_name <- Sys.getenv("SHINYAPPS_APPNAME", unset=basename(normalizePath(app_dir)))
-          rsconnect::deployApp(appDir=app_dir, appName=app_name, forceUpdate=TRUE, logLevel="verbose")
-          message("Deployment completed: https://", Sys.getenv("SHINYAPPS_ACCOUNT"), ".shinyapps.io/", app_name, "/")
-          RSCRIPT
+          set -euo pipefail
+          Rscript -e 'rsconnect::deployApp(
+            appDir     = Sys.getenv("APP_DIR", "."),
+            appName    = Sys.getenv("SHINY_APP_NAME"),
+            account    = Sys.getenv("SHINY_ACCOUNT"),
+            forc
