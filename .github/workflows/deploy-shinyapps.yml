@@ -1,7 +1,7 @@
 name: Deploy to shinyapps.io
 
 on:
-  workflow_dispatch:   # manual trigger while we debug
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -12,7 +12,6 @@ jobs:
     env:
       APP_DIR: "."
       SHINYAPPS_APPNAME: "SumSearch"
-      # ⚠️ You don’t commit .Renviron to Git (keep .Renviron in .gitignore). The Action creates it on-the-fly each deploy.
 
     steps:
       - name: Check out repo
@@ -24,12 +23,10 @@ jobs:
       - name: Set up Pandoc
         uses: r-lib/actions/setup-pandoc@v2
 
-      # Install deps via r-lib action (this is the reliable way)
       - name: Install dependencies (incl. rsconnect)
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: rsconnect
-          needs: rsconnect
+          extra-packages: any::rsconnect
 
       - name: Show config
         run: |
@@ -44,30 +41,35 @@ jobs:
           SHINYAPPS_TOKEN:   ${{ secrets.SHINYAPPS_TOKEN }}
           SHINYAPPS_SECRET:  ${{ secrets.SHINYAPPS_SECRET }}
         run: |
-          Rscript -e 'options(repos=c(CRAN="https://cloud.r-project.org")); rsconnect::setAccountInfo(name=Sys.getenv("SHINYAPPS_ACCOUNT"), token=Sys.getenv("SHINYAPPS_TOKEN"), secret=Sys.getenv("SHINYAPPS_SECRET")); print(rsconnect::accountInfo())'
+          Rscript -e 'options(repos=c(CRAN="https://cloud.r-project.org"));
+          rsconnect::setAccountInfo(
+            name   = Sys.getenv("SHINYAPPS_ACCOUNT"),
+            token  = Sys.getenv("SHINYAPPS_TOKEN"),
+            secret = Sys.getenv("SHINYAPPS_SECRET")
+          );
+          print(rsconnect::accountInfo())'
 
-      # --- Minimal insertion begins ---
-      - name: Create .Renviron from GitHub Secrets (and exclude from bundle)
-        working-directory: ${{ env.APP_DIR }}
-        shell: bash
+      # --- write FEC_API_KEY into .Renviron and ensure it's included in the bundle ---
+      - name: Write .Renviron for deploy
         env:
           FEC_API_KEY: ${{ secrets.FEC_API_KEY }}
         run: |
           set -euo pipefail
-          echo "FEC_API_KEY=${FEC_API_KEY}" > .Renviron
-          # Ensure rsconnect does NOT upload .Renviron
-          { test -f .rscignore && cat .rscignore || true; echo ".Renviron"; } | awk ' !x[$0]++ ' > .rscignore
-          echo ".Renviron written and excluded via .rscignore"
-      # --- Minimal insertion ends ---
+          printf 'FEC_API_KEY=%s\n' "$FEC_API_KEY" > .Renviron
+          echo "Wrote .Renviron (1 line)"
+          # Make sure .Renviron is NOT excluded by .rscignore
+          if [ -f .rscignore ]; then
+            sed -i '/^\.Renviron$/d' .rscignore
+          fi
 
       - name: Deploy to shinyapps.io
         env:
           SHINYAPPS_ACCOUNT: ${{ secrets.SHINYAPPS_ACCOUNT }}
         run: |
-          Rscript - <<'RSCRIPT'
-          options(repos=c(CRAN="https://cloud.r-project.org"))
+          Rscript -e 'options(repos=c(CRAN="https://cloud.r-project.org"));
           app_dir  <- Sys.getenv("APP_DIR", unset=".")
           app_name <- Sys.getenv("SHINYAPPS_APPNAME", unset=basename(normalizePath(app_dir)))
-          rsconnect::deployApp(appDir=app_dir, appName=app_name, forceUpdate=TRUE, logLevel="verbose")
-          message("Deployment completed: https://", Sys.getenv("SHINYAPPS_ACCOUNT"), ".shinyapps.io/", app_name, "/")
-          RSCRIPT
+          rsconnect::deployApp(appDir = app_dir,
+                               appName = app_name,
+                               forceUpdate = TRUE,
+                               logLevel = "verbose")'
