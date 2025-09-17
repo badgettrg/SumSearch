@@ -984,15 +984,16 @@ ui <- page_sidebar(
       title = "Welcome - search",
       h3("Choose a scenario to investigate"),
       tags$ol(
+        # Scenario 1
         tags$li(
-          div(
-            # Description sits on its own line
-            span("(under construction) A political issue has surfaced and you want to know which congressional members are receiving donations from key political action committees (PAC). Enter the key text that is included in one of more PAC names.",
-                 div("Examples that retrive more than one committee: \"National Rifle Association\" or \"Planned Parenthood\" or \"Lockheed Martin\" (without quotes)."),
-                 div("Test search terms at the FEC's ",
+          div("(under construction) A political issue has surfaced and you want to know which congressional members are receiving donations from key political action committees (PAC). Enter the key text that is included in one of more PAC names. Consider:"),
+                 tags$ul(
+                   tags$li("Search terms that retrieve more than one PAC: \"National Rifle Association\" or \"Planned Parenthood\" or \"Lockheed Martin\" (without quotes)."),
+                   tags$li("Donors listed within relevant industries at ",tags$a(href="https://www.opensecrets.org/federal-lobbying/industries", "OpenSecret's list of industries", target = "_blank")),
+                   tags$li("Testing search terms at the FEC's ",
                      tags$a(href="https://www.fec.gov/data/committees/", "Committee Names", target = "_blank"),
                      " and chose terms that may retrieve more than one relevant PACs as in the examples above")
-          )),
+          ),
           div(class = "li-flex",
               div(class = "input-wrap",
                   textInput("scenario1_search_string", label = NULL, value = "Lockheed Martin")
@@ -1000,8 +1001,10 @@ ui <- page_sidebar(
               actionButton("scenario1_go", "Fetch current FEC Receipts")
           )
         ),
+        # Scenario 2
         tags$li("(Not implemented) You encountered a new political action committee (PAC) with a vague name. What is the weighted political leaning of recipients of donations from this PAC?"),
-        tags$li("(Not implemented) A member of congress makes new statements that do not align with prior stated views. What PAC money has this member received and have any of PACs increased their donations to this member?")
+       # Scenario 3
+      tags$li("(Not implemented) A member of congress makes new statements that do not align with prior stated views. What PAC money has this member received and have any of PACs increased their donations to this member?")
       )
       # plotOutput("dwplot", height = 600)
     ),
@@ -1036,7 +1039,8 @@ ui <- page_sidebar(
       h3("About / Sources / Help"),
       ###* Data sources ----
       h4("Data sources:"),
-      tags$div("FEC.gov"),
+      tags$div("This is an open source project with code available for suggestions or copying at", tags$a(href="https://github.com/badgettrg/SumSearch", "GitHub", target = "_blank")),
+      tags$h3("FEC.gov"),
       tags$ul(
         tags$li(
           tags$a(href = "https://api.open.fec.gov/developers/", "open.FEC developers", target = "_blank")
@@ -1060,13 +1064,13 @@ ui <- page_sidebar(
           tags$a(href = "https://fecnotify.fec.gov/fecnotify/register/", "Create tracker", target = "_blank")
         )
       ),
-      tags$div("VoteView.gov"),
+      tags$h3("VoteView.gov"),
       tags$ul(
         tags$li(
           tags$a(href = "https://voteview.com/data", "Data", target = "_blank")
         )
       ),
-      tags$div("GOVTRACK.us"),
+      tags$h3("GOVTRACK.us"),
       tags$ul(
         tags$li(
           tags$a(href = "https://www.govtrack.us/congress/members/current", "Congressional members list", target = "_blank")
@@ -1075,7 +1079,7 @@ ui <- page_sidebar(
           tags$a(href = "https://www.govtrack.us/accounts/lists", "Create tracker", target = "_blank")
         )
       ),
-      tags$div("opensecrets.org"),
+      tags$h3("opensecrets.org"),
       tags$ul(
         tags$li(
           tags$a(href = "https://www.opensecrets.org/members-of-congress/members-list", "Congressional members list", target = "_blank")
