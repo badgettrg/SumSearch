@@ -73,14 +73,14 @@ function_house_window_start <- function(today = Sys.Date()) {
   as.Date(sprintf("%d-01-01", even - 2))
 }
 
-function_notify_ui_and_console <- function(text, type = c("error","warning","message"), duration = 10) {
+function_notify_ui_and_console <- function(text, type = c("error","warning","message"), duration = 3) {
   # txt, type ("error","warning","message") ----
-  # duration = 10 or ID----
+  # duration = 3 or ID----
   type <- match.arg(type)
   # Console (red/green/orange bold)
-  if (type == "error")   cat(crayon::red$bold  ("[FEC API] ", text, "\n", sep=""))
-  if (type == "warning") cat(crayon::yellow$bold("[FEC API] ", text, "\n", sep=""))
-  if (type == "message") cat(crayon::green$bold ("[FEC API] ", text, "\n", sep=""))
+  if (type == "error")   cat(crayon::red$bold  ("\n[FEC API] ", text, "\n", sep=""))
+  if (type == "warning") cat(crayon::yellow$bold("\n[FEC API] ", text, "\n", sep=""))
+  if (type == "message") cat(crayon::green$bold ("\n[FEC API] ", text, "\n", sep=""))
   
   # UI toast (if we’re inside a Shiny session)
   # Resolve id/duration based on the class of `duration` ----
@@ -126,12 +126,24 @@ function_display_df_in_viewer <- function(df, caption = NULL, highlight_row = NU
   widget
 }
 
-#function_fec_current_download(troubleshoot_committees, troubleshoot_candidate_id)
-function_fec_current_download <- function(candidate_committees, tracking_pattern = tracking_pattern, search_status, dt = dt_fec_receipts){
-  # Under development: candidate_committees -----
-  
+function_fec_current_download <- function(search_status, tracking_pattern = tracking_pattern, scenario1_search_string = NULL, dt_temp = dt_fec_receipts){
+  # Usage (click here to see the call) -----
+  # function_fec_current_download ("1. Before cleaning", tracking_pattern = tracking_pattern, scenario1_search_string = scenario1_search_string, dt_temp = dt_fec_receipts)
   if (!(interactive() && requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()))
     return(invisible(NULL))
+  
+  cat(red$bgYellow$bold('\nsearch_status: ', search_status, '\n'))
+  
+  if (is.null(tracking_pattern)) tracking_pattern <- get0("tracking_pattern", inherits = TRUE)
+  if (is.null(dt_temp))          dt_temp          <- get0("dt_fec_receipts", inherits = TRUE)
+  if (is.null(scenario1_search_string)) {
+    dom <- shiny::getDefaultReactiveDomain()
+    if (!is.null(dom)) scenario1_search_string <- shiny::isolate(dom$input$scenario1_search_string)
+  }
+  if (is.null(scenario1_search_string) || !nzchar(trimws(as.character(scenario1_search_string))))
+    stop("scenario1_search_string is required (pass it explicitly or call within a Shiny session).")
+  
+  wb <- createWorkbook()
   
   #* Conditional styling HERE 2025-09-16
   header_style     <- createStyle(textDecoration = "bold", fgFill = "#f2f2f2")
@@ -150,6 +162,7 @@ function_fec_current_download <- function(candidate_committees, tracking_pattern
     freezePane(wb, sheet = sheet_name, firstRow = TRUE)
     column_committee <- match("committee_id", names(data))
     column_amount    <- match("contribution_receipt_amount", names(data))
+    column_contribution_receipt_date    <- match("contribution_receipt_date", names(data))
     column_transaction_id <- match("transaction_id", names(data))
     column_amendment_indicator_desc <- match("amendment_indicator_desc", names(data))
     # Append Summary row
@@ -175,7 +188,7 @@ function_fec_current_download <- function(candidate_committees, tracking_pattern
     last_row <- max(2, summary_row_index)  # at least row 2 if only summary exists
     if (!is.na(column_committee)) {
       addStyle(wb, sheet_name, style = col_red_style,
-               rows = 2:last_row, cols = c(column_committee, column_transaction_id, column_amendment_indicator_desc), gridExpand = TRUE, stack = TRUE)
+               rows = 2:last_row, cols = c(column_committee, column_transaction_id, column_contribution_receipt_date, column_amendment_indicator_desc), gridExpand = TRUE, stack = TRUE)
     }
     if (!is.na(column_amount)) {
       addStyle(wb, sheet_name, style = col_green_style,
@@ -199,14 +212,15 @@ function_fec_current_download <- function(candidate_committees, tracking_pattern
     invisible(NULL)
   }
   # Sheet 1: all
-  write_styled_sheet(wb, "Receipts - all", dt_fec_receipts, tracking_pattern)
+  cat(green$bold("\nAll records, rows: "),black(nrow(dt_temp)))
+  write_styled_sheet(wb, "Receipts - all", dt_temp, tracking_pattern)
   # Sheet 2: Conditional
   # using tracking_pattern
-  any_match <- dt_fec_receipts[
+  any_match <- dt_temp[
     , Reduce(`|`, lapply(.SD, function(x) grepl(tracking_pattern, x, ignore.case = TRUE))),
-    .SDcols = names(dt_fec_receipts)]
-  dt <- dt_fec_receipts[any_match]
-  dt_selected <- dt
+    .SDcols = names(dt_temp)]
+  dt_selected <- dt_temp[any_match]
+  cat(green$bold("\ntracking_pattern, rows: "),black(nrow(dt_selected)))
   write_styled_sheet(wb, "Receipts - selected",  dt_selected, tracking_pattern)
   # Sheet 3: Conditional and unique
   dt_norm <- copy(dt_selected)
@@ -218,6 +232,12 @@ function_fec_current_download <- function(candidate_committees, tracking_pattern
   }
   uniq_idx <- !duplicated(dt_norm)
   dt_unique_selected <- dt_selected[uniq_idx]
+  # Option A — plain R
+  cat(green$bold("\ntracking_pattern and unique, rows: "),
+      black(format(nrow(dt_unique_selected), big.mark=",")), "\n")
+  
+  cat(green$bold("\ntracking_pattern and contribution_receipt_amount (total value): "),
+      black(format(sum(dt_unique_selected[["contribution_receipt_amount"]], na.rm=TRUE), big.mark=",")), "\n")
   write_styled_sheet(wb, "Receipts - unique (selected)", dt_unique_selected, tracking_pattern)
   #* Sheet 3: highlight conflicted cells
   conflict_cols <- character(0)
@@ -251,17 +271,16 @@ function_fec_current_download <- function(candidate_committees, tracking_pattern
       gridExpand = TRUE, stack = TRUE
     )
   }
+  cat(green(
+    "\nmin date:", min(dt_temp$contribution_receipt_date, na.rm = TRUE),
+    " max date:", max(dt_temp$contribution_receipt_date, na.rm = TRUE),
+    "\n"
+  ))
+
   # Save workbook
-  file_name <- paste0("dt_fec_receipts - ", input$scenario1_search_string, " - 1. before cleaning - ", Sys.Date(), ".xlsx")
+  file_name <- paste0("dt_fec_receipts - ", scenario1_search_string, " - ", search_status, " - ", Sys.Date(), ".xlsx")
   saveWorkbook(wb, file_name, overwrite = TRUE)
-  cat(green$bold("\ndt_fec_receipts - ", file_name," has been downloaded to ", getwd(),".\n"))
-  cat(
-    green$bold(
-      "\nmin date:", min(dt_fec_receipts$contribution_receipt_date, na.rm = TRUE),
-      " max date:", max(dt_fec_receipts$contribution_receipt_date, na.rm = TRUE),
-      "\n"
-    )
-  )
+  cat(green("\nFile "), black("\"", file_name,"\" downloaded to ", getwd(),".\n"))
 }
 
 function_load_csv <- function(
@@ -325,7 +344,7 @@ function_fec_get <- function(url, query, retries = 6, pause = 0.5) {
         informed_first_failure <- TRUE
       }
       backoff <- pause * (2^(i - 1))
-      cat(crayon::red$bold(sprintf("[FEC API] %s. Retrying in ~%.1fs (attempt %d/%d)\n",
+      cat(crayon::red$bold(sprintf("\n[FEC API] %s. Retrying in ~%.1fs (attempt %d/%d)\n",
                                    conditionMessage(resp), backoff, i, retries)))
       Sys.sleep(backoff)
       next
@@ -590,7 +609,7 @@ function_fetch_fec_schedule_a <- function(
   dom <- shiny::getDefaultReactiveDomain()
   msg_unique <- sprintf("FEC reports %s unique receipts (collapsed by link_id).",
                         format(n_unique, big.mark = ","))
-  if (!is.null(dom)) shiny::showNotification(msg_unique, type = "message", duration = 8)
+  if (!is.null(dom)) shiny::showNotification(msg_unique, type = "message")
   cat(green$bold(msg_unique, "\n"))
   
   
@@ -951,7 +970,7 @@ ui <- page_sidebar(
     width = 320,      # adjust to taste
     
     helpText("..."),
-    selectInput("chamber", "Chamber to analyze:", c("House","Senate","All"), selected = "House"),
+    selectInput("chamber", "Chamber to analyze:", c("House","Senate"), selected = "House"),
     tags$hr(),
   ),
   
@@ -968,8 +987,12 @@ ui <- page_sidebar(
         tags$li(
           div(
             # Description sits on its own line
-            span("(under construction) A political issue has surfaced and you want to know which congressional members are receiving donations from key political action committees (PAC). Enter the key text that is included in one of more PAC names, such as \"National Rifle Association\" or \"Planned Parenthood\" or \"Lockheed Martin\" (without quotes).")
-          ),
+            span("(under construction) A political issue has surfaced and you want to know which congressional members are receiving donations from key political action committees (PAC). Enter the key text that is included in one of more PAC names.",
+                 div("Examples that retrive more than one committee: \"National Rifle Association\" or \"Planned Parenthood\" or \"Lockheed Martin\" (without quotes)."),
+                 div("Test search terms at the FEC's ",
+                     tags$a(href="https://www.fec.gov/data/committees/", "Committee Names", target = "_blank"),
+                     " and chose terms that may retrieve more than one relevant PACs as in the examples above")
+          )),
           div(class = "li-flex",
               div(class = "input-wrap",
                   textInput("scenario1_search_string", label = NULL, value = "Lockheed Martin")
@@ -1107,10 +1130,11 @@ ui <- page_sidebar(
 # Session objects (inside server()): created once per user session, safe to mutate since they’re isolated.
 server <- function(input, output, session) {
   
-  # Create reactive values for later display on tabs
+  # Reactive values for later display on tabs -----
   rv <- reactiveValues(min_receipts_date = NULL, max_date = NULL, topic = NULL)
+  rv <- reactiveValues(dwplot_data = NULL)
   
-  
+  # Load data -----
   ##* VoteView.com data -----
   if (1 ==2){
     dt_voteview <- tryCatch(
@@ -1136,9 +1160,7 @@ server <- function(input, output, session) {
   
   if (interactive()) utils::View(utils::head(dt_voteview, 100))
   
-  
-  
-  
+
   ##* CCL.txt file from the FEC -----
   dt_FEC_candidate_committee_linkage <- fread("FEC.gov/ccl.txt", sep = "|", header = FALSE,
                                               col.names = c("candidate_id", "cand_election_yr", "fec_election_yr",
@@ -1150,7 +1172,7 @@ server <- function(input, output, session) {
   dt_FEC_candidate_committee_linkage[, candidate_id := as.character(candidate_id)]
   dt_FEC_candidate_committee_linkage[, committee_id := as.character(committee_id)]
 
-  if (interactive()) utils::View(utils::head(dt_FEC_candidate_committee_linkage, 10))
+  if (interactive()) utils::View(utils::head(dt_FEC_candidate_committee_linkage, 1000))
   
   cat(green$bold("\nccl.txt: ", nrow(dt_FEC_candidate_committee_linkage), " records\n"))
 
@@ -1158,27 +1180,33 @@ server <- function(input, output, session) {
   dtr_fec_receipts <- reactiveVal(NULL)
   
   # _____________ -----
-  # scenario1_go() -----
-  observeEvent(input$scenario1_go, {
 
+  
+  # run_scenario1() -----
+  run_scenario1 <- function() {
     shinyjs::disable("scenario1_go")
     on.exit(shinyjs::enable("scenario1_go"), add = TRUE)
 
     # Parameters for searching: ------
     rv$topic <- topic <- input$scenario1_search_string
 
-    cat(green$bold("\nParameter: input$scenario1_search_string: ", input$scenario1_search_string))
-    cat(green$bold("\nParameter: input$chamber: ", input$chamber))
+    cat(green$bold("\nParameter: input$scenario1_search_string: "), black(input$scenario1_search_string))
+    cat(green$bold("\nParameter: input$chamber: "), black(input$chamber))
     
     # Date policy: House window start to now
     min_receipts_date <- as.character(function_house_window_start(Sys.Date()))
     rv$min_receipts_date <- min_receipts_date
-    cat(green$bold("\nParameter: min_receipts_date: ", min_receipts_date,"\n"))
+    cat(green$bold("\nParameter: min_receipts_date: "), black(min_receipts_date,"\n"))
     
     # Parameters for troubleshooting -----
     troubleshoot_candidate_id <- "H0LA01087"
     troubleshoot_bioname      <- "SCALISE, Steve"
     troubleshoot_committees   <- c('C00394957','C00568162')
+    # OR #
+    troubleshoot_candidate_id <- "H8NY06048"
+    troubleshoot_bioname      <- "MEEKS, Gregory W."
+    troubleshoot_committees   <- c('C00430991')
+
     if (input$scenario1_search_string == "National Rifle Association"){
       troubleshoot_candidate_id <- "H0LA01087"
       troubleshoot_bioname      <- "SCALISE, Steve"
@@ -1194,7 +1222,7 @@ server <- function(input, output, session) {
     vals <- unique(vals[!is.na(vals) & nzchar(trimws(as.character(vals)))])
     tracking_pattern <- if (length(vals) > 0) paste0("(", paste(vals, collapse = "|"), ")") else NULL
     
-    cat(green$bold("\ntracking_pattern: ", tracking_pattern, "\n"))
+    cat(green$bold("\ntracking_pattern: "), tracking_pattern, "\n")
     
     ## VoteView.com chamber restriction -----
     chamber_input <- input$chamber
@@ -1247,7 +1275,7 @@ server <- function(input, output, session) {
       q1_redacted <- q1; q1_redacted$api_key <- "DEMO_KEY"
       full_url_redacted <- httr::modify_url(base_url, query = q1_redacted)
       
-      cat(green$bold("\nFEC url: ", full_url_redacted, "\n"))
+      cat(green$bold("\nFEC url: "), underline(full_url_redacted), "\n")
       
       dat1  <- jsonlite::fromJSON(httr::content(resp1, as = "text", encoding = "UTF-8"), flatten = TRUE)
       fec_total_count <- suppressWarnings(as.integer(dat1$pagination$count %||% NA_integer_))
@@ -1262,7 +1290,7 @@ server <- function(input, output, session) {
     
     msg1  <- sprintf('The FEC reports %s candidate receipts by PACs containing "%s" in the name since %s.',
                      fec_total_count, scenario1_search_string, min_receipts_date)
-    showNotification(msg1, id = "msg_fec_total_count", type = "message", duration = NULL)
+    showNotification(msg1, id = "msg_fec_total_count", type = "message")
 
     ##* Cache available? ------
     # build EXACT key used by your shared cache (must match fetch args) ---
@@ -1335,7 +1363,7 @@ server <- function(input, output, session) {
     }
     
 
-    # Create message after we know FEC receipts source (cahce?) ----
+    # Create message after we know FEC receipts source (cache?) ----
     ev <- attr(dt_fec_receipts, "fec_cache_event") %||% "unknown"
     if (identical(ev, "local_cache_hit")) {
       function_notify_ui_and_console("Loaded from local cache (cachem).", "message", duration = 4)
@@ -1345,7 +1373,7 @@ server <- function(input, output, session) {
     
     cat(
       blue$bold(
-        "[Cache] source: ", attr(dt_fec_receipts, "fec_cache_source") %||% "none",
+        "\n[Cache] source: ", attr(dt_fec_receipts, "fec_cache_source") %||% "none",
         "; created (UTC): ",
         format(
           as.POSIXct(attr(dt_fec_receipts, "fec_cache_created"), tz = "UTC"),
@@ -1368,338 +1396,56 @@ server <- function(input, output, session) {
     
     showNotification(sprintf("%s receipts ready for analysis and will be stored for quick retreival for the next 24 hours", 
                              format(nrow(dt_fec_receipts), big.mark=",")),
-                     type = "message", duration = 6)
+                     type = "message")
 
-    ###*!! xlsx to local drive if interactive -----
-    if (interactive()) {
-      wb <- createWorkbook()
-      pattern <- "(DESJARLAIS|C00464073)"
-      if (scenario1_search_string == "Lockheed Martin")
-      {pattern <- "(DESJARLAIS|C00464073)" # Lockheed martin
-      }
-      if (scenario1_search_string == "Planned Parenthood")
-      {pattern <- "(SUOZZI|C00607200)" # Planned parenthood
-      }
-      
-      #* Conditional styling HERE 2025-09-16
-      header_style     <- createStyle(textDecoration = "bold", fgFill = "#f2f2f2")
-      col_red_style    <- createStyle(fgFill = "#fde0e0")
-      col_green_style  <- createStyle(fgFill = "#e6f4ea")
-      match_cell_style <- createStyle(fgFill = "#ffd6d6")  # light red for matched cells
-      col_blue_style <- createStyle(fgFill = "#dbe9ff")
-      write_styled_sheet <- function(wb, sheet_name, data, pattern) {
-        addWorksheet(wb, sheet_name)
-        # Ensure columns exist even if data has 0 rows
-        if (nrow(data) == 0L) data <- data[0]  # zero-row with same columns
-        writeData(
-          wb, sheet = sheet_name, x = data,
-          startCol = 1, startRow = 1, headerStyle = header_style
-        )
-        freezePane(wb, sheet = sheet_name, firstRow = TRUE)
-        column_committee <- match("committee_id", names(data))
-        column_amount    <- match("contribution_receipt_amount", names(data))
-        column_transaction_id <- match("transaction_id", names(data))
-        column_amendment_indicator_desc <- match("amendment_indicator_desc", names(data))
-        # Append Summary row
-        sum_val <- if (!is.na(column_amount)) {
-          suppressWarnings(sum(as.numeric(data[[column_amount]]), na.rm = TRUE))
-        } else NA_real_
-        # Build a one-row data.table with NA defaults
-        summary_row <- as.list(rep(NA, ncol(data)))
-        names(summary_row) <- names(data)
-        if (ncol(data) > 0) {
-          summary_row[[1]] <- "Summary"
-          if (!is.na(column_amount)) summary_row[["contribution_receipt_amount"]] <- sum_val
-        }
-        summary_dt <- as.data.table(summary_row)
-        
-        # Where to put the Summary row
-        n <- nrow(data)
-        summary_row_index <- n + 2  # header=1, data starts at 2
-        if (ncol(data) > 0) {
-          writeData(wb, sheet = sheet_name, x = summary_dt, startCol = 1, startRow = summary_row_index, colNames = FALSE)
-        }
-        # Style full columns (data rows + summary row only; not the header)
-        last_row <- max(2, summary_row_index)  # at least row 2 if only summary exists
-        if (!is.na(column_committee)) {
-          addStyle(wb, sheet_name, style = col_red_style,
-                   rows = 2:last_row, cols = c(column_committee, column_transaction_id, column_amendment_indicator_desc), gridExpand = TRUE, stack = TRUE)
-        }
-        if (!is.na(column_amount)) {
-          addStyle(wb, sheet_name, style = col_green_style,
-                   rows = 2:last_row, cols = column_amount, gridExpand = TRUE, stack = TRUE)
-        }
-        # Conditional highlight for pattern-matching cells (data rows only)
-        if (n > 0 && ncol(data) > 0) {
-          for (j in seq_along(data)) {
-            # Convert to character safely for grepl
-            chr <- as.character(data[[j]])
-            hits <- which(grepl(pattern, chr, ignore.case = TRUE))
-            if (length(hits)) {
-              addStyle(
-                wb, sheet_name, style = match_cell_style,
-                rows = hits + 1,  # +1 for header offset
-                cols = j, gridExpand = TRUE, stack = TRUE
-              )
-            }
-          }
-        }
-        invisible(NULL)
-      }
-      # Sheet 1: all
-      write_styled_sheet(wb, "Receipts - all", dt_fec_receipts, pattern)
-      # Sheet 2: Conditional
-      # using pattern
-      any_match <- dt_fec_receipts[
-        , Reduce(`|`, lapply(.SD, function(x) grepl(pattern, x, ignore.case = TRUE))),
-        .SDcols = names(dt_fec_receipts)]
-      dt <- dt_fec_receipts[any_match]
-      dt_selected <- dt
-      write_styled_sheet(wb, "Receipts - selected",  dt_selected, pattern)
-      # Sheet 3: Conditional and unique
-      dt_norm <- copy(dt_selected)
-      is_list <- vapply(dt_norm, is.list, logical(1))
-      if (any(is_list)) {
-        for (nm in names(dt_norm)[is_list]) {
-          set(dt_norm, j = nm, value = vapply(dt_norm[[nm]], function(x) paste(capture.output(dput(x)), collapse=""), character(1)))
-        }
-      }
-      uniq_idx <- !duplicated(dt_norm)
-      dt_unique_selected <- dt_selected[uniq_idx]
-      write_styled_sheet(wb, "Receipts - unique (selected)", dt_unique_selected, pattern)
-      #* Sheet 3: highlight conflicted cells
-      conflict_cols <- character(0)
-      dt_cmp <- copy(dt_selected)
-      is_list2 <- vapply(dt_cmp, is.list, logical(1))
-      if (any(is_list2)) {
-        for (nm in names(dt_cmp)[is_list2]) {
-          set(dt_cmp, j = nm, value = vapply(dt_cmp[[nm]], function(x) paste(capture.output(dput(x)), collapse=""), character(1)))
-        }
-      }
-      if (nrow(dt_cmp) > 1L && ncol(dt_cmp) > 1L) {
-        cn <- names(dt_cmp)
-        for (j in cn) {
-          by_cols <- setdiff(cn, j)
-          if (length(by_cols) == 0L) next
-          tmp <- dt_cmp[, .(n_unique = uniqueN(get(j))), by = by_cols]
-          if (any(tmp$n_unique > 1L, na.rm = TRUE)) conflict_cols <- c(conflict_cols, j)
-        }
-        conflict_cols <- unique(conflict_cols)
-      }
-      
-      if (length(conflict_cols)) {
-        n <- nrow(dt_unique_selected)
-        summary_row_index <- n + 2
-        last_row <- max(2, summary_row_index)
-        addStyle(
-          wb, "Receipts - unique (selected)",
-          style = col_blue_style,
-          rows = 2:last_row,
-          cols = match(conflict_cols, names(dt_unique_selected)),
-          gridExpand = TRUE, stack = TRUE
-        )
-      }
-      # Save workbook
-      file_name <- paste0("dt_fec_receipts - ", input$scenario1_search_string, " - 1. before cleaning - ", Sys.Date(), ".xlsx")
-      saveWorkbook(wb, file_name, overwrite = TRUE)
-      cat(green$bold("\ndt_fec_receipts - ", file_name," has been downloaded to ", getwd(),".\n"))
-      cat(
-        green$bold(
-          "\nmin date:", min(dt_fec_receipts$contribution_receipt_date, na.rm = TRUE),
-          " max date:", max(dt_fec_receipts$contribution_receipt_date, na.rm = TRUE),
-          "\n"
-        )
-      )
-      }
-    
-    
-    ###* Remove rows duplicate: transaction_id, sub_id, file_number, image_number, and contribution_receipt_date ---------------------------
-    # contribution_receipt_date added the unique group 2025-09-14
-    # First, identify and write to console all transaction_ID that vary on one of these columns
-    
-    cat("uniqueN(transaction_id): ", uniqueN(dt_fec_receipts$transaction_id), "\n")
-    cat("nrow(dt_fec_receipts) before any data cleaning:  ", nrow(dt_fec_receipts), "\n")
-      
-    
-    #keys_duplicated <- c("transaction_id", "sub_id", "file_number", "image_number")
-    keys_duplicated <- c("transaction_id", "sub_id", "file_number", "image_number","contribution_receipt_date")
-    #want_columns <- c("committee_id", "contributor_id", keys_duplicated, "contribution_receipt_date")
-    want_columns <- c("committee_id","contributor_id",
-                   "transaction_id","sub_id","file_number","image_number",
-                   "contribution_receipt_date")
-    
-    missing <- setdiff(want_columns, names(dt_fec_receipts))
-    if (length(missing)) stop(red$bold("Missing columns: ", paste(missing, collapse = ", ")))
+    ###*!! xlsx to local drive if interactive (before) -----
+    function_fec_current_download ("1. Before cleaning", tracking_pattern = tracking_pattern, scenario1_search_string = scenario1_search_string, dt_temp = dt_fec_receipts)
 
-    # If transaction_id is unique, the four-key set must be unique too.
-    if (uniqueN(dt_fec_receipts$transaction_id) == nrow(dt_fec_receipts)) {
-      cat(green$bold("transaction_id is unique ⇒ no four-key duplicates possible.\n"))
-    }
+    # Remove rows with receipt dates before min_receipts_date
+    # Normalize to a simple character vector once
+    s <- gsub("\\s+", " ", as.character(dt_fec_receipts$contribution_receipt_date))
     
-    ###* Find true duplicates on the four-key set (correct approach)
-    ##* 2) Level 2
-    # Method A (fast & memory-light): group count on the five keys
-    dup_rows <- dt_fec_receipts[, .N, by = keys_duplicated][N > 1]
+    # Detect column format from the first non-empty value
+    first <- s[which(nzchar(s))[1L]]
     
-    if (nrow(dup_rows) == 0) {
-      cat(green$bold("No exact duplicates on (transaction_id, sub_id, file_number, image_number, contribution_receipt_date).\n"))
+    if (grepl("^\\d{4}-\\d{2}-\\d{2}$", first)) {
+      # ISO date, no time: 2025-07-28
+      dt_fec_receipts[, receipt_idate := as.IDate(s)]
+    } else if (grepl("^\\d{4}/\\d{2}/\\d{2}\\s+\\d{2}:\\d{2}:\\d{2}$", first)) {
+      # Y/m/d HH:MM:SS: 2025/07/28 00:00:00
+      dt_fec_receipts[, receipt_idate := as.IDate(
+        as.POSIXct(s, format = "%Y/%m/%d %H:%M:%S", tz = "UTC")
+      )]
     } else {
-      cat(red$bold("Warning: ", format(nrow(dup_rows), big.mark=","),
-          " unique transaction IDs after removing duplicate key combinations found on the five-key set.\n"))
-      function_display_df_in_viewer(dup_rows[order(-N)], "Duplicate five-key combinations")
-      
-      # Optional: show all rows for the first duplicate combo, with your limited columns
-      k1 <- dup_rows[1]
-      function_display_df_in_viewer(
-        dt_fec_receipts[
-          transaction_id == k1$transaction_id &
-            sub_id         == k1$sub_id &
-            file_number    == k1$file_number &
-            image_number   == k1$image_number &
-            contribution_receipt_date   == k1$contribution_receipt_date, ..want_columns],
-            sprintf("Rows for duplicate keys = (%s, %s, %s, %s, %s)",
-                k1$transaction_id, k1$sub_id, k1$file_number, k1$image_number, k1$contribution_receipt_date)
-      )
+      # m/d/Y h:m:s AM/PM: 7/28/2025 12:00:00 AM
+      dt_fec_receipts[, receipt_idate := as.IDate(
+        as.POSIXct(s, format = "%m/%d/%Y %I:%M:%S %p", tz = "UTC")
+      )]
     }
     
-    cat(green$bold("\nnrow(dt_fec_receipts) before de-duplication: ", nrow(dt_fec_receipts), "\n"))
-    # 4) Conflicts & De-duplication (amendment-aware) (variation within a single key)
-    ##* 3) Level 2
-    ## Strategy:
-    ##  1) Keep only the *latest filing* per transaction_id (max file_number).
-    ##  2) Report remaining conflicts:
-    ##       a) by transaction_id: multiple sub_id and/or multiple image_number
-    ##       b) by sub_id: multiple transaction_id and/or multiple image_number
-    ##     For any multi-image cases, build DocQuery URLs.
-    ##  3) De-duplicate the working table to (transaction_id, image_number) rows.
-
-    stopifnot(data.table::is.data.table(dt_fec_receipts))
-    
-    # Coerce key columns to stable types
-    dt_fec_receipts[, transaction_id := as.character(transaction_id)]
-    dt_fec_receipts[, sub_id        := as.character(sub_id)]
-    dt_fec_receipts[, image_number  := as.character(image_number)]
-    dt_fec_receipts[, file_number_num := suppressWarnings(as.numeric(file_number))]
-    
-    # 0) Amendment filter: keep latest filing per transaction_id by max(file_number_num)
-    if (1==1){
-    latest_only <- dt_fec_receipts[
-      , {
-        max_file_numer_num <- suppressWarnings(max(file_number_num, na.rm = TRUE))
-        if (is.finite(max_file_numer_num)) .SD[file_number_num == max_file_numer_num] else .SD
-      },
-      by = transaction_id
-    ]
-    }
-    
-    # 1) Conflicts by transaction_id (post-amendment)
-    txn_conflicts <- latest_only[
-      , .(
-        n_sub_id  = uniqueN(sub_id,       na.rm = TRUE),
-        n_image   = uniqueN(image_number, na.rm = TRUE)
-      ),
-      by = transaction_id
-    ][ n_sub_id > 1 | n_image > 1 ]
-    
-    if (nrow(txn_conflicts) == 0) {
-      cat(green$bold("OK: No conflicts within transaction_id (sub_id/image_number) after ignoring amendments.\n"))
-    } else {
-      txn_img_urls <- latest_only[
-        transaction_id %in% txn_conflicts$transaction_id,
-        .(images = sort(unique(na.omit(image_number)))),
-        by = transaction_id
-      ][ lengths(images) > 1 ][
-        , .(
-          image_numbers = paste(images, collapse = ", "),
-          image_urls    = paste0("https://docquery.fec.gov/cgi-bin/fecimg/?", images) |>
-            paste(collapse = ", ")
-        ),
-        by = transaction_id
-      ]
-      
-      msg_txn <- paste0(
-        format(nrow(txn_conflicts), big.mark = ","),
-        " transaction_id values have internal conflicts after ignoring amendments (may be true duplicates at the FEC)."
-      )
-      cat(red$bold("\n", msg_txn, "\n"))
-      function_notify_ui_and_console(msg_txn, "warning")
-      
-      if (nrow(txn_img_urls) > 0) {
-        function_display_df_in_viewer(txn_img_urls, "DocQuery URLs for transaction_id with multiple images (latest filing)")
-      } else {
-        function_display_df_in_viewer(txn_conflicts, "Conflicts by transaction_id (post-amendment)")
-      }
-    }
-    
-    # 2) Conflicts by sub_id (post-amendment)
-    sub_conflicts <- latest_only[
-      , .(
-        n_txn   = uniqueN(transaction_id),
-        n_image = uniqueN(image_number, na.rm = TRUE),
-        n_dates = uniqueN(contribution_receipt_date, na.rm = TRUE)
-      ),
-      by = sub_id
-    ][ n_txn > 1 | n_image > 1 | n_dates > 1 ]
-    
-    if (1==2){ # deleted by chatgpt 2025-09-14
-    if (nrow(sub_conflicts) == 0) {
-      cat(green$bold("OK: No conflicts within sub_id (transaction_id/image_number) after ignoring amendments.\n"))
-    } else {
-      sid_tid_img_urls <- latest_only[
-        , .(images = sort(unique(na.omit(image_number)))), by = .(sub_id, transaction_id)
-      ][ lengths(images) > 1 ][
-        , .(
-          image_numbers = paste(images, collapse = ", "),
-          image_urls    = paste0("https://docquery.fec.gov/cgi-bin/fecimg/?", images) |>
-            paste(collapse = ", ")
-        ),
-        by = .(sub_id, transaction_id)
-      ]
-      
-      msg_sub <- paste0(
-        format(nrow(sub_conflicts), big.mark = ","),
-        " sub_id values have internal conflicts after ignoring amendments."
-      )
-      cat(red$bold("\n", msg_sub, "\n"))
-      function_notify_ui_and_console(msg_sub, "warning")
-      
-      if (nrow(sid_tid_img_urls) > 0) {
-        function_display_df_in_viewer(sid_tid_img_urls, "DocQuery URLs for (sub_id, transaction_id) with multiple images (latest filing)")
-      } else {
-        function_display_df_in_viewer(sub_conflicts, "Conflicts by sub_id (post-amendment)")
-      }
-    }
-    
-    } # end of chatgpt deletion 2025-09-14
-
-    # 3) De-duplicate the main table to (transaction_id, image_number)
-    #    Sort so non-NA images come first, then image_number asc, then newest file_number_num
-    # latest_only[, image_is_na := is.na(image_number)]
-    latest_only[, image_is_na := is.na(image_number)]
-    data.table::setorder(latest_only, transaction_id, image_is_na, image_number, -file_number_num)
-    
-    dt_fec_receipts <- unique(
-      latest_only,
-      by = c("transaction_id", "image_number", "contribution_receipt_date")
+    # Parse your threshold (works if you pass "YYYY-MM-DD" or the AM/PM form)
+    min_idate <- tryCatch(
+      as.IDate(min_receipts_date),
+      error = function(...) as.IDate(as.POSIXct(min_receipts_date, format = "%m/%d/%Y %I:%M:%S %p", tz = "UTC"))
     )
     
-    if (1==2){ # deleted by chatgpt 2025-09-14
-    data.table::setorder(latest_only, transaction_id, image_is_na, image_number, -file_number_num)
-    } # deleted by chatgpt 2025-09-14
+    # Filter
+    dt_fec_receipts <- dt_fec_receipts[receipt_idate >= min_idate]
     
-    dt_fec_receipts <- unique(latest_only, 
-                              by = c("transaction_id", "image_number", "contribution_receipt_date"))
-    
-    # Clean helper columns
-    dt_fec_receipts[, c("file_number_num","image_is_na") := NULL]
+    # (Optional) sanity check
+    cat("Receipt date range after parse:", min(dt_fec_receipts$receipt_idate),
+        "to", max(dt_fec_receipts$receipt_idate), "\n")
     
     # Notify counts
     function_notify_ui_and_console(
-      paste0("Receipts after removing duplicates: ",
+      paste0("Receipts after removing min_receipts_date: ",
              format(nrow(dt_fec_receipts), big.mark=",")),
       type = "message", duration = 10
     )
 
+    ###*!! xlsx to local drive if interactive (old receipts)-----
+    function_fec_current_download ("2. After min_receipts_date", tracking_pattern = tracking_pattern, scenario1_search_string = scenario1_search_string, dt_temp = dt_fec_receipts)
+    
     ###* Remove national committees, WinRed/ActBlue ---------------------------
     # These committees do not accurately tag the receiving candidate
     remove_committeesby_ID <- c('C00003418','C00010603', # National
@@ -1717,23 +1463,21 @@ server <- function(input, output, session) {
     )
 
     # WORK HERE post-fetch notifications ---
-    if (interactive()) utils::View(utils::head(dt_fec_receipts, 10))
-
     cache_src     <- attr(dt_fec_receipts, "fec_cache_source")
     cache_created <- attr(dt_fec_receipts, "fec_cache_created")
     if (!is.null(cache_src) && cache_src %in% c("shared","memory")) {
       if (identical(cache_src, "shared") && !is.null(cache_created)) {
         showNotification(sprintf("Using cached data from shared store (created %s, ≤24h).", cache_created),
-                         type = "message", duration = 6)
+                         type = "message")
       } else {
-        showNotification("Using cached data (in-memory, ≤24h).", type = "message", duration = 6)
+        showNotification("Using cached data (in-memory, ≤24h).", type = "message")
       }
     }
     
     total_count_attr <- attr(dt_fec_receipts, "fec_total_count")
     if (!is.null(total_count_attr) && !is.na(total_count_attr) && total_count_attr >= 5000L) {
       showNotification("⚠ FEC may cap paginated results at ~5,000 rows. Try narrowing the date window or query.",
-                       type = "warning", duration = 8)
+                       type = "warning")
     }
 
     val_raw <- attr(dt_fec_receipts, "fec_unique_link_id", exact = TRUE)
@@ -1750,146 +1494,11 @@ server <- function(input, output, session) {
       }
     }
     
-    
     ###*!! xlsx to local drive if interactive -----
-    if (interactive()) {
-      # FREEZE HERE 2025-09-16
-      # function_create_fec_xlsx_download (filename = "", pattern, = , data = dt_fec_receipts)
-      wb <- createWorkbook()
-      pattern <- "(DESJARLAIS|C00464073)"
-      if (scenario1_search_string == "Lockheed Martin")
-        {pattern <- "(DESJARLAIS|C00464073)" # Lockheed martin
-      }
-      if (scenario1_search_string == "Planned Parenthood")
-      {pattern <- "(SUOZZI|C00607200)" # Planned parenthood
-      }
-
-      #* Conditional styling
-      header_style     <- createStyle(textDecoration = "bold", fgFill = "#f2f2f2")
-      col_red_style    <- createStyle(fgFill = "#fde0e0")
-      col_green_style  <- createStyle(fgFill = "#e6f4ea")
-      match_cell_style <- createStyle(fgFill = "#ffd6d6")  # light red for matched cells
-      col_blue_style <- createStyle(fgFill = "#dbe9ff")
-      write_styled_sheet <- function(wb, sheet_name, data, pattern) {
-        addWorksheet(wb, sheet_name)
-        # Ensure columns exist even if data has 0 rows
-        if (nrow(data) == 0L) data <- data[0]  # zero-row with same columns
-        writeData(
-          wb, sheet = sheet_name, x = data,
-          startCol = 1, startRow = 1, headerStyle = header_style
-        )
-        freezePane(wb, sheet = sheet_name, firstRow = TRUE)
-        column_committee <- match("committee_id", names(data))
-        column_amount    <- match("contribution_receipt_amount", names(data))
-        column_transaction_id <- match("transaction_id", names(data))
-        column_amendment_indicator_desc <- match("amendment_indicator_desc", names(data))
-        # Append Summary row
-        sum_val <- if (!is.na(column_amount)) {
-          suppressWarnings(sum(as.numeric(data[[column_amount]]), na.rm = TRUE))
-        } else NA_real_
-        # Build a one-row data.table with NA defaults
-        summary_row <- as.list(rep(NA, ncol(data)))
-        names(summary_row) <- names(data)
-        if (ncol(data) > 0) {
-          summary_row[[1]] <- "Summary"
-          if (!is.na(column_amount)) summary_row[["contribution_receipt_amount"]] <- sum_val
-        }
-        summary_dt <- as.data.table(summary_row)
-        
-        # Where to put the Summary row
-        n <- nrow(data)
-        summary_row_index <- n + 2  # header=1, data starts at 2
-        if (ncol(data) > 0) {
-          writeData(wb, sheet = sheet_name, x = summary_dt, startCol = 1, startRow = summary_row_index, colNames = FALSE)
-        }
-        # Style full columns (data rows + summary row only; not the header)
-        last_row <- max(2, summary_row_index)  # at least row 2 if only summary exists
-        if (!is.na(column_committee)) {
-          addStyle(wb, sheet_name, style = col_red_style,
-                   rows = 2:last_row, cols = c(column_committee, column_transaction_id, column_amendment_indicator_desc), gridExpand = TRUE, stack = TRUE)
-        }
-        if (!is.na(column_amount)) {
-          addStyle(wb, sheet_name, style = col_green_style,
-                   rows = 2:last_row, cols = column_amount, gridExpand = TRUE, stack = TRUE)
-        }
-        # Conditional highlight for pattern-matching cells (data rows only)
-        if (n > 0 && ncol(data) > 0) {
-          for (j in seq_along(data)) {
-            # Convert to character safely for grepl
-            chr <- as.character(data[[j]])
-            hits <- which(grepl(pattern, chr, ignore.case = TRUE))
-            if (length(hits)) {
-              addStyle(
-                wb, sheet_name, style = match_cell_style,
-                rows = hits + 1,  # +1 for header offset
-                cols = j, gridExpand = TRUE, stack = TRUE
-              )
-            }
-          }
-        }
-        invisible(NULL)
-      }
-      # Sheet 1: all
-      write_styled_sheet(wb, "Receipts - all", dt_fec_receipts, pattern)
-      # Sheet 2: Conditional
-      # using pattern
-      any_match <- dt_fec_receipts[
-        , Reduce(`|`, lapply(.SD, function(x) grepl(pattern, x, ignore.case = TRUE))),
-        .SDcols = names(dt_fec_receipts)]
-      dt <- dt_fec_receipts[any_match]
-      dt_selected <- dt
-      write_styled_sheet(wb, "Receipts - selected",  dt_selected, pattern)
-      # Sheet 3: Conditional and unique
-      dt_norm <- copy(dt_selected)
-      is_list <- vapply(dt_norm, is.list, logical(1))
-      if (any(is_list)) {
-        for (nm in names(dt_norm)[is_list]) {
-          set(dt_norm, j = nm, value = vapply(dt_norm[[nm]], function(x) paste(capture.output(dput(x)), collapse=""), character(1)))
-        }
-      }
-      uniq_idx <- !duplicated(dt_norm)
-      dt_unique_selected <- dt_selected[uniq_idx]
-      write_styled_sheet(wb, "Receipts - unique (selected)", dt_unique_selected, pattern)
-      #* Sheet 3: highlight conflicted cells
-      conflict_cols <- character(0)
-      dt_cmp <- copy(dt_selected)
-      is_list2 <- vapply(dt_cmp, is.list, logical(1))
-      if (any(is_list2)) {
-        for (nm in names(dt_cmp)[is_list2]) {
-          set(dt_cmp, j = nm, value = vapply(dt_cmp[[nm]], function(x) paste(capture.output(dput(x)), collapse=""), character(1)))
-        }
-      }
-      if (nrow(dt_cmp) > 1L && ncol(dt_cmp) > 1L) {
-        cn <- names(dt_cmp)
-        for (j in cn) {
-          by_cols <- setdiff(cn, j)
-          if (length(by_cols) == 0L) next
-          tmp <- dt_cmp[, .(n_unique = uniqueN(get(j))), by = by_cols]
-          if (any(tmp$n_unique > 1L, na.rm = TRUE)) conflict_cols <- c(conflict_cols, j)
-        }
-        conflict_cols <- unique(conflict_cols)
-      }
-      
-      if (length(conflict_cols)) {
-        n <- nrow(dt_unique_selected)
-        summary_row_index <- n + 2
-        last_row <- max(2, summary_row_index)
-        addStyle(
-          wb, "Receipts - unique (selected)",
-          style = col_blue_style,
-          rows = 2:last_row,
-          cols = match(conflict_cols, names(dt_unique_selected)),
-          gridExpand = TRUE, stack = TRUE
-        )
-      }
-      # Save workbook
-      file_name <- paste0("dt_fec_receipts - ", input$scenario1_search_string, " - 4. after cleaning - ", Sys.Date(), ".xlsx")
-      saveWorkbook(wb, file_name, overwrite = TRUE)
-    cat(green$bold("\ndt_fec_receipts - ", file_name," has been downloaded to ", getwd(),".\n"))
-    }
+    function_fec_current_download ("4. After removal of nationals", tracking_pattern = tracking_pattern, scenario1_search_string = scenario1_search_string, dt_temp = dt_fec_receipts)
 
     #2. Merge data sources ----
-    cat(green$bold("\nMerge FEC and selected voteview chamber (dt_voteview_chamber_temp)\n"))
+    cat(red$bgYellow$bold("\nMerge prep FEC and selected voteview chamber (dt_voteview_chamber_temp)\n"))
 
     ###* unitedstates.io for crosswalk dt_crosswalk_flat.csv ----- 
     `%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
@@ -1968,7 +1577,13 @@ server <- function(input, output, session) {
         topic_flag == TRUE
     ]
 
-    cat("Aggregate topic receipts by the candidates' committee_id")
+    cat(green("\nAfter date criterion: nrow(dt_fec_receipts_topic): ", nrow(dt_fec_receipts_topic),"\n"))
+
+    tracking_n_rows <- dt_fec_receipts_topic[`committee_id` %chin% as.character(unlist(troubleshoot_committees, use.names = FALSE)), .N]
+    cat(green("\nAfter date AND tracking pattern: nrow(dt_fec_receipts_topic): ", tracking_n_rows,"\n"))
+
+    cat(green$bold("\nAggregate topic receipts by the candidates' committee_id\n"))
+    
     dt_fec_receipts_topic_by_cmte <- dt_fec_receipts_topic[
       !is.na(committee_id) & nzchar(committee_id),
       .(
@@ -1978,14 +1593,35 @@ server <- function(input, output, session) {
       by = .(committee_id)
     ]
     
-    dt_fec_receipts_topic_by_cand <- merge(
-      dt_fec_receipts_topic_by_cmte,
-      dt_FEC_candidate_committee_linkage[, .(committee_id, candidate_id)],
-      by = "committee_id",
-      all.x = TRUE
-    )
+    cat(green("\nAfter date criterion: nrow(dt_fec_receipts_topic_by_cmte): ", nrow(dt_fec_receipts_topic_by_cmte),"\n"))
+
+    tracking_n_rows <- dt_fec_receipts_topic_by_cmte[`committee_id` %chin% as.character(unlist(troubleshoot_committees, use.names = FALSE)), .N]
+    cat(green("\nAfter date AND tracking pattern: nrow(dt_fec_receipts_topic_by_cmte): ", tracking_n_rows,"\n"))
     
+    dt_fec_receipts_topic_by_cand <-
+      merge(
+        dt_fec_receipts_topic_by_cmte,
+        unique(dt_FEC_candidate_committee_linkage[, .(committee_id, candidate_id)]),
+        by = "committee_id",
+        all.x = TRUE
+      )[
+        !is.na(candidate_id),
+        .(
+          topic_receipts       = sum(topic_receipts,       na.rm = TRUE),
+          topic_receipts_count = sum(topic_receipts_count, na.rm = TRUE),
+          committee_count      = .N   # use uniqueN(committee_id) if you want distinct committees
+        ),
+        by = candidate_id
+      ]
     
+    ###*!! xlsx to local drive if interactive -----
+    function_fec_current_download ("5. All done", tracking_pattern = tracking_pattern, scenario1_search_string = scenario1_search_string, dt_temp = dt_fec_receipts_topic_by_cand)
+
+        cat(green$bold("\nAfter date criterion: nrow(dt_fec_receipts_topic_by_cand): ", nrow(dt_fec_receipts_topic_by_cand),"\n"))
+      
+    #tracking_n_rows <- dt_fec_receipts_topic_by_cand[`committee_id` %chin% as.character(unlist(dt_fec_receipts_topic_by_cand, use.names = FALSE)), .N]
+    #cat(green("\nAfter date AND tracking pattern: nrow(dt_fec_receipts_topic_by_cand): ", tracking_n_rows,"\n"))
+
     rhs <- if (input$chamber == "All") {
       dt_fec_receipts_topic_by_cand[
         !is.na(candidate_id),
@@ -2010,14 +1646,14 @@ server <- function(input, output, session) {
     if (nrow(dup_left))  cat(red$bold("Left side (LHS) has duplicate fec_candidate_id; that will multiply rows.\n"))
     
     ## ***Final quality check *****-----
-    cat(red$bold("\n\n\nFinal quality check\n"))
+    cat(red$bgYellow$bold("\n\n\nFinal quality check\n"))
     nrow(dt_voteview_chamber_temp_candidates[dt_voteview_chamber_temp_candidates$chamber == "Senate"])
     # Both chambers, receiving money for topic
     length(unique(dt_fec_receipts_topic_by_cand$candidate_id))
 
     # Selected chamber, receiving money for topic
     n_temp <- nrow(dt_fec_receipts_topic_by_cand[substr(candidate_id, 1, 1) == ch_letter])
-    cat(green$bold("dt_fec_receipts_topic_by_cand rows: ", n_temp,"\n"))
+    cat(green$bold("dt_fec_receipts_topic_by_cand rows: "), black(n_temp,"\n"))
     
     dt_voteview_chamber_temp_candidates_with_topic <- merge(
       dt_voteview_chamber_temp_candidates,
@@ -2084,7 +1720,7 @@ server <- function(input, output, session) {
     # Use selected rows to drive your plot:
     observeEvent(input$dt_voteview_chamber_temp_candidates_with_topic_rows_selected, {
       sel <- input$dt_voteview_chamber_temp_candidates_with_topic_rows_selected %||% integer()
-      dt_sel <- dt[sel]
+      #dt_sel <- dt[sel]
       # ... plot dt_sel ...
     })
     
@@ -2105,8 +1741,8 @@ server <- function(input, output, session) {
     
     #topic_pattern <- str_replace_all(input$scenario1_search_string, "\\s+", "+")
     
-    cat(green$bold("\ninput$scenario1_search_string: ", input$scenario1_search_string, "\n"))
-    cat(green$bold("\nrv$min_receipts_date: ", rv$min_receipts_date, "\n"))
+    cat(green$bold("\ninput$scenario1_search_string: "), black(input$scenario1_search_string, "\n"))
+    cat(green$bold("\nrv$min_receipts_date: "), black(rv$min_receipts_date, "\n"))
     
     dt_voteview_chamber_temp_candidates_with_topic[
       , FEC_receipts_link := paste0( 
@@ -2166,65 +1802,10 @@ server <- function(input, output, session) {
     
     
     #* Plot ----
-    output$dwplot <- renderPlot({
-      dt <- dt_voteview_chamber_temp
-      cat(green$bold("nrow(dt): ", nrow(dt)))
-      shiny::validate(shiny::need(nrow(dt) > 0, "No data available for the selected filters."))
-      
-      need_cols <- c("nominate_dim1","nominate_dim2","party_code")
-      missing <- setdiff(need_cols, names(dt))
-      shiny::validate(shiny::need(length(missing) == 0, paste("Missing columns:", paste(missing, collapse = ", "))))
-      
-      cols <- ifelse(dt$party_code == 200, "red",
-                     ifelse(dt$party_code == 100, "blue", "gray"))
-      
-      op <- par(no.readonly = TRUE); on.exit(par(op))
-      par(oma = c(3, 0, 0, 0))
-      
-      plot(dt$nominate_dim1, dt$nominate_dim2,
-           col = cols, 
-           pch = 1, # open circle
-           xlab = "DW-NOMINATE Dimension 1: Economic/Redistributive",
-           ylab = "DW-NOMINATE Dimension 2: Other Votes",
-           main = paste0(topic, ": DW-NOMINATE Plot for ", input$chamber))
-      
-      mtext("Liberal",      side = 1, line = 2, adj = 0, font = 2, col = "gray")
-      mtext("Conservative", side = 1, line = 2, adj = 1, font = 2, col = "gray")
-      mtext("Liberal",      side = 2, line = 2, adj = 0, font = 2, col = "gray")
-      mtext("Conservative", side = 2, line = 2, adj = 1, font = 2, col = "gray")
-
-      # solid points for congress members with receipts
-      cols <- ifelse(dt_voteview_chamber_temp_candidates_with_topic$party_code == 200, "red",
-                     ifelse(dt_voteview_chamber_temp_candidates_with_topic$party_code == 100, "blue", "gray"))
-
-      # Members with receiipts
-      points(dt_voteview_chamber_temp_candidates_with_topic$nominate_dim1,
-             dt_voteview_chamber_temp_candidates_with_topic$nominate_dim2,
-             col = cols,
-             pch = 19)
-      
-      # Outliers
-      # Only plot outliers
-      with(
-        dt_voteview_chamber_temp_candidates_with_topic[outlier_normal == TRUE],
-        points(
-          nominate_dim1,
-          nominate_dim2,
-          col = "black",   # override party colors
-          pch = 19,
-          cex = 0.5        # 50% size
-        )
-      )
-      
-            
-      mtext("Notes:", side = 1, line = -1, adj = 0, outer = TRUE, cex = 1.2, font = 2)
-      mtext("* Plot made with data from https://voteview.com/data and other sources by bob.badgett@gmail.com",
-            side = 1, line = 0, adj = 0, outer = TRUE, cex = 1.2)
-      mtext("* Plot design is from https://voteview.com/congress/senate",
-            side = 1, line = 1, adj = 0, outer = TRUE, cex = 1.2)
-      mtext(paste("Printed:", Sys.Date()),
-            side = 1, line = 2, adj = 1, outer = TRUE, cex = 1.2)
-    })
+    rv$dwplot_data <- list(
+      all   = data.table::copy(dt_voteview_chamber_temp_candidates),
+      topic = data.table::copy(dt_voteview_chamber_temp_candidates_with_topic)
+    )
     
     #* Wrap up ----
     if (interactive())if (interactive()) utils::View(utils::head(dt_fec_receipts, 10))
@@ -2239,18 +1820,90 @@ server <- function(input, output, session) {
       removeNotification("msg_fec_total_count", session = getDefaultReactiveDomain())
       #** Switch panel tab -----
       updateTabsetPanel(session, inputId = "main_tabs", selected = "Results")
-  }) # end of observeEvent: input$scenario1_go
-  
+  } # end of run_scenario1() -----
+
   ## _____________ -----
-  ## Output results ----------------------
+
+  ## Outputs ----------------------
+  ##* output$dwplot-----
+  output$dwplot <- renderPlot({
+    plot_data <- req(rv$dwplot_data)
+    all   <- data.table::as.data.table(plot_data$all)
+    topic <- data.table::as.data.table(plot_data$topic)
+
+    cat(green$bold("nrow(all): "), black(nrow(all)))
+    shiny::validate(shiny::need(nrow(all) > 0, "No data available for the selected filters."))
+    
+    need_cols <- c("nominate_dim1","nominate_dim2","party_code")
+    missing <- setdiff(need_cols, names(all))
+    shiny::validate(shiny::need(length(missing) == 0, paste("Missing columns:", paste(missing, collapse = ", "))))
+    
+    cols <- ifelse(all$party_code == 200, "red",
+                   ifelse(all$party_code == 100, "blue", "gray"))
+    
+    op <- par(no.readonly = TRUE); on.exit(par(op))
+    par(oma = c(3, 0, 0, 0))
+    
+    plot(all$nominate_dim1, all$nominate_dim2,
+         col = cols, 
+         pch = 1, # open circle
+         xlab = "DW-NOMINATE Dimension 1: Economic/Redistributive",
+         ylab = "DW-NOMINATE Dimension 2: Other Votes",
+         main = paste0(input$scenario1_search_string, ": DW-NOMINATE Plot for ", input$chamber))
+    
+    # Members all
+    points(all$nominate_dim1,
+           all$nominate_dim2,
+           col = cols,
+           pch = 1)
+
+    mtext("Liberal",      side = 1, line = 2, adj = 0, font = 2, col = "gray")
+    mtext("Conservative", side = 1, line = 2, adj = 1, font = 2, col = "gray")
+    mtext("Liberal",      side = 2, line = 2, adj = 0, font = 2, col = "gray")
+    mtext("Conservative", side = 2, line = 2, adj = 1, font = 2, col = "gray")
+    
+    # solid points for congress members with receipts
+    cols <- ifelse(topic$party_code == 200, "red",
+                   ifelse(topic$party_code == 100, "blue", "gray"))
+    
+    # Members with receipts
+    points(topic$nominate_dim1,
+           topic$nominate_dim2,
+           col = cols,
+           pch = 19)
+    
+    # Outliers
+    # Only plot outliers
+    with(
+      topic[outlier_normal == TRUE],
+      points(
+        nominate_dim1,
+        nominate_dim2,
+        col = "black",   # override party colors
+        pch = 19,
+        cex = 0.5        # 50% size
+      )
+    )
+    
+    
+    mtext("Notes:", side = 1, line = -1, adj = 0, outer = TRUE, cex = 1.2, font = 2)
+    mtext("* Plot made with data from https://voteview.com/data and other sources by bob.badgett@gmail.com",
+          side = 1, line = 0, adj = 0, outer = TRUE, cex = 1.2)
+    mtext("* Plot design is from https://voteview.com/congress/senate",
+          side = 1, line = 1, adj = 0, outer = TRUE, cex = 1.2)
+    mtext(paste("Printed:", Sys.Date()),
+          side = 1, line = 2, adj = 1, outer = TRUE, cex = 1.2)
+  })
   
+  ##* output$results_min_date -----
   output$results_min_date <- renderText({
     req(rv$min_receipts_date)
   })
   
+  ##* output$results_nrows -----
   output$results_nrows <- renderText({
     fec_total_count <- attr(dtr_fec_receipts(), "fec_total_count")
-
+    
     if (!is.null(fec_total_count) && !is.na(fec_total_count)) {
       paste0(
         rv$topic, ": receipts received from FEC:",
@@ -2258,13 +1911,30 @@ server <- function(input, output, session) {
         " since ", rv$min_receipts_date, 
         " through ", strftime(rv$max_date, tz = "America/New_York", format = "%Y-%m-%d %Z")
       )
-      } else {
+    } else {
       paste0("Receipts received from FEC for \"", input$scenario1_search_string, "\" since ", rv$min_receipts_date)
     }
   })
-  
-}
 
+  ## _____________ -----
+  # ObserveEvents -----
+  #* input$scenario1_go ------
+  observeEvent(input$scenario1_go, run_scenario1(), ignoreInit = TRUE)
+
+  #* input$chamber ------
+  observeEvent(input$chamber, {
+    active_tab <- NULL
+    for (id in c("main_tabs","results_tabs","navbar","tabs")) {
+      if (!is.null(input[[id]])) { active_tab <- input[[id]]; break }
+    }
+    if (!is.null(active_tab) && active_tab %in% c("Results - details", "Results")) {
+      run_scenario1()
+    }
+  }, ignoreInit = TRUE)  
+  
+}# end of server function -----
+
+# ___________________________-----
 # Launch shinyApp *****************-----
 if (Sys.getenv("RSTUDIO") == "1") {
   cat("~ expands to: ", path.expand("~"), "\n", sep = "")
