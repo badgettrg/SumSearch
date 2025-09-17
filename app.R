@@ -655,6 +655,41 @@ function_fetch_fec_schedule_a <- function(
   ans
 }
 
+# --- helper: append one log row to CSV
+function_append_search_log <- function(input, session, log_path = "sumsearch-log.csv") {
+  # Abort if running interactively (e.g. R console or RStudio, not Shiny server)
+  if (interactive()) return(invisible(NULL))
+  
+  # Get best-guess client IP (honor proxies/CDNs if present)
+  ip <- tryCatch({
+    req <- session$request
+    raw <- req$HTTP_CF_CONNECTING_IP %||%
+      req$HTTP_X_FORWARDED_FOR %||%
+      req$REMOTE_ADDR %||% NA_character_
+    # If X-Forwarded-For has multiple IPs, take the first
+    if (length(raw) && !is.na(raw)) strsplit(raw, ",\\s*")[[1]][1] else NA_character_
+  }, error = function(e) NA_character_)
+  
+  row <- data.frame(
+    date      = as.character(Sys.Date()),          # yyyy-mm-dd
+    ip        = as.character(ip),
+    scenario1 = as.character(input$scenario1_search_string %||% NA_character_),
+    chamber   = as.character(input$chamber %||% NA_character_),
+    stringsAsFactors = FALSE
+  )
+  
+  # Write (create with header if new; append otherwise)
+  exists_now <- file.exists(log_path)
+  data.table::fwrite(
+    row,
+    file      = log_path,
+    append    = exists_now,
+    col.names = !exists_now
+  )
+  
+  invisible(row)
+}
+
 # Globals ------
 ## Notes: -----
 # Global objects (outside server()): created once per worker, shared by all users on that worker.
@@ -1923,8 +1958,12 @@ server <- function(input, output, session) {
   ## _____________ -----
   # ObserveEvents -----
   #* input$scenario1_go ------
-  observeEvent(input$scenario1_go, run_scenario1(), ignoreInit = TRUE)
+  observeEvent(input$scenario1_go, 
+               run_scenario1(), 
+               ignoreInit = TRUE)
 
+  function_append_search_log(input, session) 
+  
   #* input$chamber ------
   observeEvent(input$chamber, {
     active_tab <- NULL
