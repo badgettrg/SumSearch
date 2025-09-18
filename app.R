@@ -607,10 +607,10 @@ function_fetch_fec_schedule_a <- function(
   q_count <- build_query(1L); q_count$page <- NULL; q_count$per_page <- NULL
   n_unique <- function_fec_count_unique_link_id_count(base_url, q_count, sort = sort, per_page = 100L)
   dom <- shiny::getDefaultReactiveDomain()
-  msg_unique <- sprintf("FEC reports %s unique receipts (collapsed by link_id).",
+  msg_unique <- sprintf("FEC reports %s unique receipts.",
                         format(n_unique, big.mark = ","))
-  if (!is.null(dom)) shiny::showNotification(msg_unique, type = "message")
-  cat(green$bold(msg_unique, "\n"))
+  #if (!is.null(dom)) shiny::showNotification(msg_unique, type = "message")
+  cat(green$bold("In function_fetch_fec_schedule_a: ",msg_unique, "\n"))
   
   
   if (!is.finite(total_pages) || is.na(total_pages) || total_pages < 1L) total_pages <- 1L
@@ -653,41 +653,6 @@ function_fetch_fec_schedule_a <- function(
   attr(ans, "fec_total_count") <- fec_total_count
   attr(ans, "fec_unique_link_id") <- n_unique
   ans
-}
-
-# --- helper: append one log row to CSV
-function_append_search_log <- function(input, session, log_path = "sumsearch-log.csv") {
-  # Abort if running interactively (e.g. R console or RStudio, not Shiny server)
-  if (interactive()) return(invisible(NULL))
-  
-  # Get best-guess client IP (honor proxies/CDNs if present)
-  ip <- tryCatch({
-    req <- session$request
-    raw <- req$HTTP_CF_CONNECTING_IP %||%
-      req$HTTP_X_FORWARDED_FOR %||%
-      req$REMOTE_ADDR %||% NA_character_
-    # If X-Forwarded-For has multiple IPs, take the first
-    if (length(raw) && !is.na(raw)) strsplit(raw, ",\\s*")[[1]][1] else NA_character_
-  }, error = function(e) NA_character_)
-  
-  row <- data.frame(
-    date      = as.character(Sys.Date()),          # yyyy-mm-dd
-    ip        = as.character(ip),
-    scenario1 = as.character(input$scenario1_search_string %||% NA_character_),
-    chamber   = as.character(input$chamber %||% NA_character_),
-    stringsAsFactors = FALSE
-  )
-  
-  # Write (create with header if new; append otherwise)
-  exists_now <- file.exists(log_path)
-  data.table::fwrite(
-    row,
-    file      = log_path,
-    append    = exists_now,
-    col.names = !exists_now
-  )
-  
-  invisible(row)
 }
 
 # Globals ------
@@ -1092,7 +1057,7 @@ ui <- page_sidebar(
         ),
         ),
         tags$ul(tags$li(
-          tags$a(href = "https://www.fec.gov/data/receipts/", "Receipts", target = "_blank"), " (search using the campaign committees aboves)",
+          tags$a(href = "https://www.fec.gov/data/receipts/", "Receipts", target = "_blank"), " (search using the campaign committees above)",
         )
         ),
         tags$li(
@@ -1365,7 +1330,7 @@ server <- function(input, output, session) {
     if (isTRUE(shared_enabled) && isTRUE(shared_fresh_hit)) {
       # hit: read from shared pins (no network)
       dt_fec_receipts <- pins::pin_read(board, key)
-      function_notify_ui_and_console("Loaded from shared cache (pins).","message", 8)
+      # function_notify_ui_and_console("Loaded from shared cache (pins).","message")
     } else {
       # miss (or shared disabled): use cached wrapper (local cachem + writes to pins if enabled)
 
@@ -1405,9 +1370,9 @@ server <- function(input, output, session) {
     # Create message after we know FEC receipts source (cache?) ----
     ev <- attr(dt_fec_receipts, "fec_cache_event") %||% "unknown"
     if (identical(ev, "local_cache_hit")) {
-      function_notify_ui_and_console("Loaded from local cache (cachem).", "message", duration = 4)
+      function_notify_ui_and_console("Loaded from local cache (cachem).", "message")
     } else {
-      function_notify_ui_and_console("Downloaded from FEC.gov API (cached for 24h)..", "message", duration = 8)
+      function_notify_ui_and_console("Downloaded from FEC.gov API.", "message")
     }    
     
     cat(
@@ -1433,7 +1398,7 @@ server <- function(input, output, session) {
                            "rows with the most recent entry", 
                            rv$max_date,".\n"))
     
-    showNotification(sprintf("%s receipts ready for analysis and will be stored for quick retreival for the next 24 hours", 
+    showNotification(sprintf("%s receipts ready for analysis and will be stored for quick retreival during your current session.", 
                              format(nrow(dt_fec_receipts), big.mark=",")),
                      type = "message")
 
@@ -1477,9 +1442,9 @@ server <- function(input, output, session) {
     
     # Notify counts
     function_notify_ui_and_console(
-      paste0("Receipts after removing min_receipts_date: ",
+      paste0("Receipts after removing earliest date criterion: ",
              format(nrow(dt_fec_receipts), big.mark=",")),
-      type = "message", duration = 10
+      type = "message"
     )
 
     ###*!! xlsx to local drive if interactive (old receipts)-----
@@ -1498,24 +1463,24 @@ server <- function(input, output, session) {
     function_notify_ui_and_console(
       paste0("Receipts after removing national committees: ",
              format(nrow(dt_fec_receipts), big.mark=",")),
-      type = "message", duration = 10
+      type = "message"
     )
 
     # WORK HERE post-fetch notifications ---
     cache_src     <- attr(dt_fec_receipts, "fec_cache_source")
     cache_created <- attr(dt_fec_receipts, "fec_cache_created")
-    if (!is.null(cache_src) && cache_src %in% c("shared","memory")) {
-      if (identical(cache_src, "shared") && !is.null(cache_created)) {
-        showNotification(sprintf("Using cached data from shared store (created %s, ≤24h).", cache_created),
-                         type = "message")
-      } else {
-        showNotification("Using cached data (in-memory, ≤24h).", type = "message")
-      }
-    }
+    #if (!is.null(cache_src) && cache_src %in% c("shared","memory")) {
+    #  if (identical(cache_src, "shared") && !is.null(cache_created)) {
+    #    showNotification(sprintf("Using cached data from shared store (created %s, ≤24h).", cache_created),
+    #                     type = "message")
+    #  } else {
+    #    showNotification("Using cached data (in-memory, ≤24h).", type = "message")
+    #  }
+    #}
     
     total_count_attr <- attr(dt_fec_receipts, "fec_total_count")
     if (!is.null(total_count_attr) && !is.na(total_count_attr) && total_count_attr >= 5000L) {
-      showNotification("⚠ FEC may cap paginated results at ~5,000 rows. Try narrowing the date window or query.",
+      showNotification("⚠ FEC may cap results at ~5,000 rows. Try narrowing the date window or query.",
                        type = "warning")
     }
 
@@ -1962,7 +1927,8 @@ server <- function(input, output, session) {
                run_scenario1(), 
                ignoreInit = TRUE)
 
-  function_append_search_log(input, session) 
+  #** Log needed -----
+  # COnsider whether to and how to
   
   #* input$chamber ------
   observeEvent(input$chamber, {
