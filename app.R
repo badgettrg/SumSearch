@@ -43,6 +43,7 @@ library(htmltools)
 library(bslib)
 library(crayon)
 library(stringr)
+library(dplyr)
 
 # For caching:
 library(memoise)
@@ -700,8 +701,6 @@ fec_cache <- cache_disk(dir = file.path(tempdir(), "fec_cache"),
                         max_age = 24 * 60 * 60)
 
 ##*3) Helpers: null-coalescing and canonical cache key ----
-`%||%` <- function(a, b) if (!is.null(a)) a else b
-
 function_fec_cache_key <- function(args) {
   canon <- list(
     contributor_name = tolower(trimws(args$contributor_name %||% "")),
@@ -986,7 +985,7 @@ ui <- page_sidebar(
       tags$ol(
         # Scenario 1
         tags$li(
-          div("(under construction) A political issue has surfaced and you want to know which congressional members are receiving donations from key political action committees (PAC). Enter the key text that is included in one of more PAC names. Consider:"),
+          div("(under construction) A political issue has surfaced and you want to know which congressional members are receiving donations from relevant political action committees (PAC). Enter the key text that is included in one of more PAC names. Consider:"),
                  tags$ul(
                    tags$li("Search terms that retrieve more than one PAC: \"National Rifle Association\" or \"Planned Parenthood\" or \"Lockheed Martin\" (without quotes)."),
                    tags$li("Donors listed within relevant industries at ",tags$a(href="https://www.opensecrets.org/federal-lobbying/industries", "OpenSecret's list of industries", target = "_blank")),
@@ -1031,6 +1030,10 @@ ui <- page_sidebar(
                        tags$li("Select row(s) in the table for candidates to have their initials next to their points on the DW-NOMINATE plot (not yet implemented).")
       ),
       DTOutput("dt_voteview_chamber_temp_candidates_with_topic"),
+      div("Notes:", style = "font-weight: bold;"),
+      div("* Growth rate is the ratio of receipts from past year to year prior (present through 13 months / 14 through 25 months."),
+      div("New members of Congress no receipts prior to 13 months ago will ",
+          tags$strong(tags$em("not have ratios"))),
       tags$br()
     ),
     ### Tab 4: About / Sources / Help -----
@@ -1137,6 +1140,7 @@ server <- function(input, output, session) {
   # Reactive values for later display on tabs -----
   rv <- reactiveValues(min_receipts_date = NULL, max_date = NULL, topic = NULL)
   rv <- reactiveValues(dwplot_data = NULL)
+  rv <- reactiveValues(dt_voteview_chamber_temp_candidates_with_topic = NULL)
   
   # Load data -----
   ##* VoteView.com data -----
@@ -1402,6 +1406,9 @@ server <- function(input, output, session) {
                              format(nrow(dt_fec_receipts), big.mark=",")),
                      type = "message")
 
+    # This date conversion need much later when making ratio f 12 month receipts over 13-25 months
+    dt_fec_receipts[ , contribution_receipt_date := data.table::as.IDate(contribution_receipt_date) ]
+    
     ###*!! xlsx to local drive if interactive (before) -----
     function_fec_current_download ("1. Before cleaning", tracking_pattern = tracking_pattern, scenario1_search_string = scenario1_search_string, dt_temp = dt_fec_receipts)
 
@@ -1502,10 +1509,9 @@ server <- function(input, output, session) {
     function_fec_current_download ("4. After removal of nationals", tracking_pattern = tracking_pattern, scenario1_search_string = scenario1_search_string, dt_temp = dt_fec_receipts)
 
     #2. Merge data sources ----
-    cat(red$bgYellow$bold("\nMerge prep FEC and selected voteview chamber (dt_voteview_chamber_temp)\n"))
+    cat(red$bgYellow$bold("\nMerge FEC and selected voteview chamber (dt_voteview_chamber_temp)\n"))
 
     ###* unitedstates.io for crosswalk dt_crosswalk_flat.csv ----- 
-    `%||%` <- function(x, y) if (is.null(x) || length(x) == 0) y else x
     .get_char_vec <- function(x) as.character(unlist(x %||% character(0)))
     
     dt_crosswalk_flat <- read.csv('unitedstates.io/cw_flat.csv')
@@ -1586,21 +1592,53 @@ server <- function(input, output, session) {
     tracking_n_rows <- dt_fec_receipts_topic[`committee_id` %chin% as.character(unlist(troubleshoot_committees, use.names = FALSE)), .N]
     cat(green("\nAfter date AND tracking pattern: nrow(dt_fec_receipts_topic): ", tracking_n_rows,"\n"))
 
-    cat(green$bold("\nAggregate topic receipts by the candidates' committee_id\n"))
+    ##* Aggregate RECEIPTS BY COMMITTEE (keep window sums; no growth yet) ----
+    cat(red$bgYellow$bold("aggregate RECEIPTS BY COMMITTEE (window sums only)"), "\n")
     
-    dt_fec_receipts_topic_by_cmte <- dt_fec_receipts_topic[
-      !is.na(committee_id) & nzchar(committee_id),
-      .(
-        topic_receipts_count = .N,
-        topic_receipts = sum(contribution_receipt_amount, na.rm = TRUE)
-      ),
-      by = .(committee_id)
-    ]
+    # Assumes: dt_fec_receipts_topic$contribution_receipt_date is already IDate
+    ref_date <- dt_fec_receipts_topic[!is.na(contribution_receipt_date),
+                                      max(contribution_receipt_date)]
+    
+    if (is.infinite(ref_date)) {
+      dt_fec_receipts_topic_by_cmte <- dt_fec_receipts_topic[
+        0, .(committee_id = character(),
+             topic_receipts_count      = integer(),
+             topic_receipts            = numeric(),
+             topic_receipts_25_months  = numeric(),
+             topic_receipts_13_months  = numeric())
+      ]
+    } else {
+      ref_month_start <- data.table::as.IDate(strftime(ref_date, "%Y-%m-01"))
+      ref_month_end   <- data.table::as.IDate(strftime(as.Date(ref_month_start) + 32, "%Y-%m-01")) - 1L
+      shift_months_idate <- function(id, n) { x <- as.POSIXlt(as.Date(id)); x$mon <- x$mon + n; data.table::as.IDate(as.Date(x)) }
+      start_25 <- shift_months_idate(ref_month_start, -24L)  # inclusive
+      start_13 <- shift_months_idate(ref_month_start, -12L)  # inclusive
+      
+      dt_fec_receipts_topic_by_cmte <- dt_fec_receipts_topic[
+        !is.na(committee_id) & nzchar(committee_id),
+        .(
+          topic_receipts_count      = .N,
+          topic_receipts            = sum(contribution_receipt_amount, na.rm = TRUE),
+          topic_receipts_25_months  = sum(contribution_receipt_amount[
+            contribution_receipt_date >= start_25 &
+              contribution_receipt_date <= ref_month_end
+          ], na.rm = TRUE),
+          topic_receipts_13_months  = sum(contribution_receipt_amount[
+            contribution_receipt_date >= start_13 &
+              contribution_receipt_date <= ref_month_end
+          ], na.rm = TRUE)
+        ),
+        by = .(committee_id)
+      ]
+    }
     
     cat(green("\nAfter date criterion: nrow(dt_fec_receipts_topic_by_cmte): ", nrow(dt_fec_receipts_topic_by_cmte),"\n"))
 
     tracking_n_rows <- dt_fec_receipts_topic_by_cmte[`committee_id` %chin% as.character(unlist(troubleshoot_committees, use.names = FALSE)), .N]
     cat(green("\nAfter date AND tracking pattern: nrow(dt_fec_receipts_topic_by_cmte): ", tracking_n_rows,"\n"))
+    
+    ##* Make CANDIDATE FROM COMMITTEES -----
+    cat(red$bgYellow$bold("Make Candidate from committees: dt_fec_receipts_topic_by_cand rows: "), "\n")
     
     dt_fec_receipts_topic_by_cand <-
       merge(
@@ -1611,13 +1649,32 @@ server <- function(input, output, session) {
       )[
         !is.na(candidate_id),
         .(
-          topic_receipts       = sum(topic_receipts,       na.rm = TRUE),
-          topic_receipts_count = sum(topic_receipts_count, na.rm = TRUE),
-          committee_count      = .N   # use uniqueN(committee_id) if you want distinct committees
+          topic_receipts            = sum(topic_receipts,             na.rm = TRUE),
+          topic_receipts_count      = sum(topic_receipts_count,       na.rm = TRUE),
+          topic_receipts_25_months  = sum(topic_receipts_25_months,   na.rm = TRUE),
+          topic_receipts_13_months  = sum(topic_receipts_13_months,   na.rm = TRUE),
+          committee_count           = .N   # use uniqueN(committee_id) for distinct committees
         ),
         by = candidate_id
+      ][
+        # Prior 12 months = 25-month window minus 13-month window; floor at 0
+        , prior_12_months := pmax(topic_receipts_25_months - topic_receipts_13_months, 0)
+      ][
+        # Growth = recent 13 months / prior 12 months; NA if denom is 0 or NA
+        , topic_receipts_growth_rate := fifelse(
+          is.na(prior_12_months) | prior_12_months == 0,
+          NA_real_,
+          round(topic_receipts_13_months / prior_12_months, 1)
+        )
+      ][
+        , prior_12_months := NULL
       ]
-    
+
+        if (interactive()) {utils::View(
+      utils::head(dt_fec_receipts_topic_by_cand, 500),
+      title = "dt_fec_receipts_topic_by_cand - just made - line 1648"
+    )}
+
     ###*!! xlsx to local drive if interactive -----
     function_fec_current_download ("5. All done", tracking_pattern = tracking_pattern, scenario1_search_string = scenario1_search_string, dt_temp = dt_fec_receipts_topic_by_cand)
 
@@ -1649,7 +1706,7 @@ server <- function(input, output, session) {
     if (nrow(dup_right)) cat(red$bold("Right side (RHS( still has duplicate candidate_id (unexpected).\n"))
     if (nrow(dup_left))  cat(red$bold("Left side (LHS) has duplicate fec_candidate_id; that will multiply rows.\n"))
     
-    ## ***Final quality check *****-----
+    ## Final quality check ****
     cat(red$bgYellow$bold("\n\n\nFinal quality check\n"))
     nrow(dt_voteview_chamber_temp_candidates[dt_voteview_chamber_temp_candidates$chamber == "Senate"])
     # Both chambers, receiving money for topic
@@ -1659,16 +1716,45 @@ server <- function(input, output, session) {
     n_temp <- nrow(dt_fec_receipts_topic_by_cand[substr(candidate_id, 1, 1) == ch_letter])
     cat(green$bold("dt_fec_receipts_topic_by_cand rows: "), black(n_temp,"\n"))
     
+    ##* Make CANDIDATE BY TOPIC: dt_fec_receipts_topic_by_cand -----
+    cat(red$bgYellow$bold("CANDIDATE BY TOPIC: dt_fec_receipts_topic_by_cand rows: "), black(n_temp,"\n"))
     dt_voteview_chamber_temp_candidates_with_topic <- merge(
       dt_voteview_chamber_temp_candidates,
       dt_fec_receipts_topic_by_cand[
         substr(candidate_id, 1, 1) == ch_letter,
-        .(candidate_id, topic_receipts, topic_receipts_count)
+        .(candidate_id, topic_receipts, topic_receipts_count, topic_receipts_growth_rate)
       ],
       by.x = "fec_candidate_id",
       by.y = "candidate_id",
       all.x = TRUE
     )
+
+    if (interactive()) {utils::View(
+      utils::head(dt_voteview_chamber_temp_candidates_with_topic, 500),
+      title = "dt_voteview_chamber_temp_candidates_with_topic lne 1743"
+    )}
+
+    # Add name and initials safely (vectorized; no [[1]]) -----
+    dt_voteview_chamber_temp_candidates_with_topic[
+      , c("last_raw","first_raw") := .(
+        sub(",.*$", "", as.character(bioname)),
+        sub("^.*?,\\s*", "", as.character(bioname))
+      )
+    ][
+      , first_token := sub("\\s+.*$", "", trimws(first_raw))
+    ][
+      , candidate_name := paste(
+        tools::toTitleCase(tolower(first_token)),
+        tools::toTitleCase(tolower(trimws(last_raw)))
+      )
+    ][
+      , candidate_initials := toupper(paste0(
+        substr(first_token, 1, 1),
+        substr(trimws(last_raw), 1, 1)
+      ))
+    ][
+      , c("last_raw","first_raw","first_token") := NULL
+    ]
     
     # Replace missing receipts with 0
     dt_voteview_chamber_temp_candidates_with_topic[
@@ -1695,30 +1781,112 @@ server <- function(input, output, session) {
         order(-product)
       ]
 
-    # Append URLs to details -----
-    # FEC_candidate_link
+
+    ##* FEC_candidate_link for both FEC and ai_prompt ------
     dt_voteview_chamber_temp_candidates_with_topic[
       , FEC_candidate_link := paste0("https://www.fec.gov/data/candidate/", fec_candidate_id)
     ]    
-    output$dt_voteview_chamber_temp_candidates_with_topic <- DT::renderDT({
-      d <- copy(dt)  # your prepared table (with the anchor-tag column already)
+
+    dt_comm_params <- dt_FEC_candidate_committee_linkage[
+      !is.na(candidate_id) & !is.na(committee_id),
+      .(committee_params = paste0("&committee_id=", unique(committee_id), collapse = "")),
+      by = candidate_id
+    ]
+    dt_voteview_chamber_temp_candidates_with_topic[
+      dt_comm_params, on = .(fec_candidate_id = candidate_id),
+      committee_params := i.committee_params
+    ]
+    
+    dt_voteview_chamber_temp_candidates_with_topic[
+      , FEC_receipts_link := paste0( 
+        "https://www.fec.gov/data/receipts/?data_type=processed", 
+        fifelse(is.na(committee_params), "", committee_params), 
+        "&min_date=", format(as.Date(rv$min_receipts_date), "%m/%d/%Y"), "&contributor_name=", 
+        str_replace_all(input$scenario1_search_string, " ", "+")) ]    
+    
+    ##* Append AI prompt (rowwise; Base64; inline onclick) -----
+    {
+      topic_str <- if (is.null(input$scenario1_search_string) || !nzchar(input$scenario1_search_string))
+        "Lockheed Martin" else input$scenario1_search_string
       
+      # Build a scalar prompt per row
+      prompt_vec <- sprintf(
+        paste0(
+          "Regarding PAC donations to %s member %s related to %s, ",
+          "consider whether donations align with the candidate’s stated positions and recent votes and whether these have changed over time. ",
+          "The donations are available at FEC.gov at %s as of %s. ",
+          "Provide a cautious summary, cite links for any claims, and suggest 2–3 verification steps."
+        ),
+        dt_voteview_chamber_temp_candidates_with_topic$chamber,
+        dt_voteview_chamber_temp_candidates_with_topic$candidate_name,
+        topic_str,
+        dt_voteview_chamber_temp_candidates_with_topic$FEC_receipts_link,
+        format(Sys.Date(), "%m/%d/%Y")
+      )
+      
+      # Encode each scalar prompt to Base64, guaranteeing length-1 per row
+      b64_vec <- vapply(prompt_vec, jsonlite::base64_enc, character(1L))
+      
+      # Inline onclick handler – self-contained and fires once per click
+      btn_html_vec <- sprintf(
+        "<button type='button' class='copyBtn' data-id='%s' data-blob='%s' data-label='Copy AI prompt'
+    onclick=\"(function(ev,btn){
+      if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+      if (btn.__busy) return; btn.__busy = true;
+      var b64 = btn.getAttribute('data-blob');
+      function b2u(b){try{return decodeURIComponent(escape(atob(b)));}catch(e){}try{var bin=atob(b);var arr=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);return new TextDecoder('utf-8').decode(arr);}catch(_){ }return atob(b);}
+      var txt = b2u(b64); if (!txt) { btn.__busy=false; return; }
+      var orig = btn.getAttribute('data-label') || btn.textContent;
+      var flash = function(msg){ btn.textContent = msg || 'Copied!'; btn.disabled = true;
+        setTimeout(function(){ btn.textContent = orig; btn.disabled = false; btn.__busy = false; }, 900); };
+      var done = function(){ flash('Copied!'); if (window.Shiny) { Shiny.setInputValue('copy_done', {t: Date.now(), id: btn.getAttribute('data-id')}, {priority:'event'}); } };
+      if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(done).catch(function(){
+          var ta=document.createElement('textarea'); ta.value=txt; ta.style.position='fixed'; ta.style.top='-1000px';
+          document.body.appendChild(ta); ta.focus(); ta.select();
+          try { document.execCommand('copy'); } finally { document.body.removeChild(ta); }
+          done();
+        });
+      } else {
+        var ta=document.createElement('textarea'); ta.value=txt; ta.style.position='fixed'; ta.style.top='-1000px';
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        try { document.execCommand('copy'); } finally { document.body.removeChild(ta); }
+        done();
+      }
+    })(event,this);\">Copy AI prompt</button>",
+        dt_voteview_chamber_temp_candidates_with_topic$fec_candidate_id,  # data-id (any stable row id)
+        b64_vec
+      )
+      
+      # Assign HTML to the column (one button per row)
+      dt_voteview_chamber_temp_candidates_with_topic[, ai_prompt := btn_html_vec ]
+    }
+    ##* Append URLs to details -----
+    output$dt_voteview_chamber_temp_candidates_with_topic <- DT::renderDT({
+      d <- data.table::copy(dt_voteview_chamber_temp_candidates_with_topic)
       d[, Select := ""]
       data.table::setcolorder(d, c("Select", setdiff(names(d), "Select")))
-      html_cols <- c("FEC_candidate_link")# columns that contain HTML
       
       DT::datatable(
         d,
-        rownames   = FALSE,
-        escape     = setdiff(seq_along(d), which(names(d) %in% html_cols)),
-        selection  = list(style = "multi", selector = "td:first-child"),
-        options    = list(
+        rownames  = FALSE,
+        escape    = setdiff(seq_along(d), which(names(d) %in% html_cols)),
+        selection = list(style = "multi", selector = "td:first-child"),
+        options   = list(
           dom = "tip",
           columnDefs = list(
             list(orderable = FALSE, className = "select-checkbox", targets = 0)
           )
         )
+        # no callback needed
       )
+    })
+    
+    
+    
+    # Optional toast on success
+    observeEvent(input$copy_done, {
+      showNotification("AI prompt copied to clipboard", type = "message", duration = 2)
     })
     
     # Use selected rows to drive your plot:
@@ -1729,12 +1897,6 @@ server <- function(input, output, session) {
     })
     
     # FEC_receipts_link
-    dt_comm_params <- dt_FEC_candidate_committee_linkage[
-      !is.na(candidate_id) & !is.na(committee_id),
-      .(committee_params = paste0("&committee_id=", unique(committee_id), collapse = "")),
-      by = candidate_id
-    ]
-    
     dt_voteview_chamber_temp_candidates_with_topic <- merge(
       dt_voteview_chamber_temp_candidates_with_topic,
       dt_comm_params,
@@ -1742,19 +1904,16 @@ server <- function(input, output, session) {
       by.y = "candidate_id",
       all.x = TRUE
     )
+    if (interactive()) {utils::View(
+        utils::head(dt_voteview_chamber_temp_candidates_with_topic, 500),
+        title = "dt_voteview_chamber_temp_candidates_with_topic"
+      )}
     
     #topic_pattern <- str_replace_all(input$scenario1_search_string, "\\s+", "+")
     
     cat(green$bold("\ninput$scenario1_search_string: "), black(input$scenario1_search_string, "\n"))
     cat(green$bold("\nrv$min_receipts_date: "), black(rv$min_receipts_date, "\n"))
     
-    dt_voteview_chamber_temp_candidates_with_topic[
-      , FEC_receipts_link := paste0( 
-        "https://www.fec.gov/data/receipts/?data_type=processed", 
-        fifelse(is.na(committee_params), "", committee_params), 
-        "&min_date=", format(as.Date(rv$min_receipts_date), "%m/%d/%Y"), "&contributor_name=", 
-        str_replace_all(input$scenario1_search_string, " ", "+")) ]    
-
     ## Check for outliers ----
     x <- dt_voteview_chamber_temp_candidates_with_topic$topic_receipts
     mu <- mean(x)
@@ -1763,18 +1922,30 @@ server <- function(input, output, session) {
     # Flag outliers: |z| > 2 (common cutoff), |z| > 3 (strict)
     dt_voteview_chamber_temp_candidates_with_topic[, outlier_normal := abs(z_scores) > 2]
     
-    if (interactive()) utils::View(utils::head(dt_voteview_chamber_temp_candidates_with_topic, 10))
+    if (interactive()) utils::View(utils::head(dt_voteview_chamber_temp_candidates_with_topic, 500))
     
+    #* Fill table on panelTab Results - details ----
     output$dt_voteview_chamber_temp_candidates_with_topic <- DT::renderDT({
       # If your table is created earlier as a plain data.table:
       req(exists("dt_voteview_chamber_temp_candidates_with_topic"))
       req(data.table::is.data.table(dt_voteview_chamber_temp_candidates_with_topic))
       shiny::validate(shiny::need(nrow(dt_voteview_chamber_temp_candidates_with_topic) > 0,
-                    "No rows to display."))
+                                  "No rows to display."))
       
-      keep_cols <- c("bioname", "chamber", "party_html", "state_abbrev", "topic_receipts_count", "topic_receipts", "FEC_candidate_link", "FEC_receipts_link") #, "outlier_normal")
+      keep_cols <- c(
+        "bioname", "chamber", "party_html", "state_abbrev",
+        "topic_receipts_count", "topic_receipts", "topic_receipts_growth_rate",
+        "ai_prompt",  # new column will be inserted here
+        "FEC_candidate_link", "FEC_receipts_link"
+      )
+      
+      # Build the table with the new column
+      dt_voteview_chamber_temp_candidates_with_topic <- copy(dt_voteview_chamber_temp_candidates_with_topic)
+      
+      # Apply keep_cols ordering
       dt_voteview_chamber_temp_candidates_with_topic <- dt_voteview_chamber_temp_candidates_with_topic[, ..keep_cols]
-
+      
+      # Format link columns
       dt_voteview_chamber_temp_candidates_with_topic[
         , FEC_candidate_link := sprintf(
           "<a href='%s' target='_blank'>Candidate at FEC</a>", FEC_candidate_link
@@ -1786,12 +1957,27 @@ server <- function(input, output, session) {
           "<a href='%s' target='_blank'>Receipts at FEC</a>", FEC_receipts_link
         )
       ]
-
+      
       data.table::setorder(dt_voteview_chamber_temp_candidates_with_topic, -topic_receipts)
       
+      observe({
+        rv$dt_voteview_chamber_temp_candidates_with_topic <- dt_voteview_chamber_temp_candidates_with_topic
+      })
+      
+      cat(green$bold("\ndt_voteview_chamber_temp_candidates_with_topic: "),
+          nrow(dt_voteview_chamber_temp_candidates_with_topic))
+      cat(green$bold("\nrv$dt_voteview_chamber_temp_candidates_with_topic: "),
+          nrow(rv$dt_voteview_chamber_temp_candidates_with_topic))
+      
       DT::datatable(
-        dt_voteview_chamber_temp_candidates_with_topic,
-        colnames = c("Name", "Chamber", "Party", "State", "Receipts (#)", "Receipts ($)", "Candidate overview<br>at FEC","Candidate receipts<br>at FEC<br>(if no receipts at FEC, refresh the FEC page in your browser)"), #,"Outlier ($)"),
+        rv$dt_voteview_chamber_temp_candidates_with_topic,
+        colnames = c(
+          "Name", "Chamber", "Party", "State",
+          "Receipts<br>(#)", "Receipts<br>($)", "Receipts<br>(growth rate*)",
+          "AI Prompt",  # new column header
+          "Candidate overview<br>at FEC",
+          "Candidate receipts<br>at FEC<br>(if no receipts at FEC, refresh their page in your browser)"
+        ),
         options = list(
           pageLength = 50,
           scrollX    = TRUE,
@@ -1801,6 +1987,7 @@ server <- function(input, output, session) {
         escape   = FALSE
       )
     })
+    
     
     #dt_voteview_chamber_temp_candidates_with_topic   
     
@@ -1927,9 +2114,6 @@ server <- function(input, output, session) {
                run_scenario1(), 
                ignoreInit = TRUE)
 
-  #** Log needed -----
-  # COnsider whether to and how to
-  
   #* input$chamber ------
   observeEvent(input$chamber, {
     active_tab <- NULL
@@ -1940,8 +2124,50 @@ server <- function(input, output, session) {
       run_scenario1()
     }
   }, ignoreInit = TRUE)  
+
+  #* input$main_tabs tab changes -----
+  # Where you read the selection (e.g., on tab change)
+    observeEvent(input$main_tabs, {
+      cat(red$bgYellow$bold("\nTab was changed\n"))
+      if (identical(input$main_tabs, "Results")) {
+        
+        req(
+          rv$dt_voteview_chamber_temp_candidates_with_topic,
+          input$dt_voteview_chamber_temp_candidates_with_topic_rows_selected
+        )
+        
+        # Get the indices of the currently selected rows
+        selected_rows_indices <- input$dt_voteview_chamber_temp_candidates_with_topic_rows_selected
+        
+        cat(green$bold("\nselected_rows_indices: ", selected_rows_indices))
+
+        # Ensure there are selected rows before trying to subset
+        if (!is.null(selected_rows_indices) && length(selected_rows_indices) > 0) {
+          
+          #plot_data <- req(rv$dwplot_data)
+          #all   <- data.table::as.data.table(plot_data$all)
+          #topic <- data.table::as.data.table(plot_data$topic)
+
+          #selected_rows <- topic[selected_rows_indices, ]
+          selected_rows <- rv$dt_voteview_chamber_temp_candidates_with_topic[selected_rows_indices, ]
+          
+          # Extract the 'candidate_id' column
+          selected_candidate_ids <- selected_rows$fec_candidate_id
+          cat(green$bold("\nSelected candidate IDs: ", selected_candidate_ids))
+          selected_candidate_initials <- selected_rows$candidate_initials
+          cat(green$bold("\nSelected candidate initials: "), selected_candidate_initials)
+        } else {
+          cat(red$bold("\nNo rows selected in the data table.\n"))
+        }
+      }
+    })
+
+
+
+    #** Log needed -??----
+  # COnsider whether to and how to
   
-}# end of server function -----
+}## END of SERVER function -----
 
 # ___________________________-----
 # Launch shinyApp *****************-----
